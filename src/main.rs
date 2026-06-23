@@ -178,6 +178,21 @@ fn load_all_rules(state: &Arc<state::AppState>) {
 
 async fn resolve_target(state: &Arc<state::AppState>) {
     let raw = &state.config.unlock.target;
+
+    // Auto-detect public IP when target is placeholder or empty
+    if raw.is_empty() || raw == "0.0.0.0" {
+        if let Some(ip) = detect_public_ip().await {
+            info!("auto-detected public IP: {ip}");
+            state.unlock_ip.store(Arc::new(state::ResolvedTarget {
+                ipv4: Some(ip),
+                raw: ip.to_string(),
+            }));
+            return;
+        }
+        tracing::warn!("failed to auto-detect public IP, keeping {raw}");
+        return;
+    }
+
     if let Ok(ip) = raw.parse::<Ipv4Addr>() {
         state.unlock_ip.store(Arc::new(state::ResolvedTarget {
             ipv4: Some(ip),
@@ -202,6 +217,28 @@ async fn resolve_target(state: &Arc<state::AppState>) {
         }
         Err(e) => tracing::warn!("failed to resolve unlock target {raw}: {e}"),
     }
+}
+
+async fn detect_public_ip() -> Option<Ipv4Addr> {
+    let urls = [
+        "https://api.ipify.org",
+        "https://ifconfig.me/ip",
+        "https://icanhazip.com",
+    ];
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .ok()?;
+    for url in &urls {
+        if let Ok(resp) = client.get(*url).send().await {
+            if let Ok(text) = resp.text().await {
+                if let Ok(ip) = text.trim().parse::<Ipv4Addr>() {
+                    return Some(ip);
+                }
+            }
+        }
+    }
+    None
 }
 
 fn install_service() -> anyhow::Result<()> {
