@@ -23,6 +23,7 @@ fi
 
 # --- parse args ---
 PANEL_URL=""
+GRPC_ADDR=""
 NODE_ID=""
 TOKEN=""
 NODE_TYPE="dns"
@@ -31,7 +32,7 @@ UNLOCK_TARGET=""
 
 usage() {
     echo "Usage:"
-    echo "  Install:   bash <(curl -sL URL) --panel URL --node-id N --token T [--type dns|transit] [--target IP] [--version vX.Y.Z]"
+    echo "  Install:   bash <(curl -sL URL) --panel URL --node-id N --token T [--grpc URL] [--type dns|transit] [--target IP] [--version vX.Y.Z]"
     echo "  Uninstall: bash <(curl -sL URL) uninstall"
     exit 1
 }
@@ -39,6 +40,7 @@ usage() {
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --panel)    PANEL_URL="$2"; shift 2 ;;
+        --grpc)     GRPC_ADDR="$2"; shift 2 ;;
         --node-id)  NODE_ID="$2"; shift 2 ;;
         --token)    TOKEN="$2"; shift 2 ;;
         --type)     NODE_TYPE="$2"; shift 2 ;;
@@ -126,6 +128,7 @@ enabled = false
 
 [panel]
 url = "$PANEL_URL"
+grpc_addr = "$GRPC_ADDR"
 node_id = $NODE_ID
 token = "$TOKEN"
 heartbeat_secs = 30
