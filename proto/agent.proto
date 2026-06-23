@@ -45,7 +45,14 @@ message AgentMessage {
     AgentAuth       auth      = 1;
     AgentHeartbeat  heartbeat = 2;
     AgentIPReport   ip_report = 3;
+    CommandResult   result    = 4;
   }
+}
+
+message CommandResult {
+  string action = 1;
+  string output = 2;
+  bool   ok     = 3;
 }
 
 message AgentAuth {

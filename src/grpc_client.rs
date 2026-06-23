@@ -7,6 +7,7 @@ use tonic::transport::{Channel, ClientTlsConfig};
 use tracing::{info, warn};
 
 use crate::state::{AppState, SourceEntry, SourceList};
+use pb::CommandResult;
 
 pub mod pb {
     tonic::include_proto!("agent");
@@ -129,6 +130,7 @@ async fn connect_and_stream(state: &Arc<AppState>) -> anyhow::Result<()> {
 
     // Heartbeat sender
     let hb_state = state.clone();
+    let cmd_tx = tx.clone();
     let hb_tx = tx;
     let interval = Duration::from_secs(panel.heartbeat_secs.max(10));
 
@@ -172,7 +174,7 @@ async fn connect_and_stream(state: &Arc<AppState>) -> anyhow::Result<()> {
                 apply_config_push(state, &cfg);
             }
             Some(server_message::Payload::Command(cmd)) => {
-                handle_command(state, &cmd);
+                handle_command(state, &cmd, cmd_tx.clone());
             }
             Some(server_message::Payload::Ack(_)) => {}
             None => {}
@@ -224,7 +226,7 @@ fn apply_config_push(state: &Arc<AppState>, cfg: &pb::ConfigPush) {
     }
 }
 
-fn handle_command(state: &Arc<AppState>, cmd: &pb::ServerCommand) {
+fn handle_command(state: &Arc<AppState>, cmd: &pb::ServerCommand, tx: mpsc::Sender<AgentMessage>) {
     info!("grpc: command '{}'", cmd.action);
     match cmd.action.as_str() {
         "reload" => {
@@ -234,7 +236,46 @@ fn handle_command(state: &Arc<AppState>, cmd: &pb::ServerCommand) {
             warn!("grpc: restart — exiting");
             std::process::exit(0);
         }
+        "run_ut" => {
+            let flags = cmd.data.clone();
+            tokio::spawn(async move {
+                info!("grpc: running ut {}", flags);
+                let output = run_ut(&flags).await;
+                let ok = !output.contains("Failed to run ut");
+                let msg = AgentMessage {
+                    payload: Some(agent_message::Payload::Result(CommandResult {
+                        action: "run_ut".into(),
+                        output,
+                        ok,
+                    })),
+                };
+                let _ = tx.send(msg).await;
+            });
+        }
         _ => warn!("grpc: unknown command '{}'", cmd.action),
+    }
+}
+
+async fn run_ut(flags: &str) -> String {
+    use tokio::process::Command;
+    let cmd_str = format!("ut {}", flags);
+    match Command::new("sh")
+        .args(["-c", &cmd_str])
+        .env("NO_COLOR", "1")
+        .env("TERM", "dumb")
+        .output()
+        .await
+    {
+        Ok(o) => {
+            let mut out = String::from_utf8_lossy(&o.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            if !stderr.is_empty() {
+                out.push('\n');
+                out.push_str(&stderr);
+            }
+            out
+        }
+        Err(e) => format!("Failed to run ut: {}", e),
     }
 }
 
