@@ -60,7 +60,19 @@ async fn connect_and_stream(state: &Arc<AppState>) -> anyhow::Result<()> {
     let mut ep = Channel::from_shared(url)?
         .connect_timeout(Duration::from_secs(10));
     if use_tls {
-        ep = ep.tls_config(ClientTlsConfig::new())?;
+        let mut tls = ClientTlsConfig::new();
+        for path in &[
+            "/etc/ssl/certs/ca-certificates.crt",
+            "/etc/pki/tls/certs/ca-bundle.crt",
+        ] {
+            if let Ok(pem) = std::fs::read(path) {
+                if !pem.is_empty() {
+                    tls = tls.ca_certificate(tonic::transport::Certificate::from_pem(pem));
+                    break;
+                }
+            }
+        }
+        ep = ep.tls_config(tls)?;
     }
     let channel = ep.connect().await?;
 
