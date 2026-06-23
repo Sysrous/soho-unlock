@@ -285,10 +285,31 @@ async fn run_ut(flags: &str) -> String {
                 out.push('\n');
                 out.push_str(&stderr);
             }
-            out
+            strip_ansi(&out)
         }
         Err(e) => format!("Failed to run ut: {}", e),
     }
+}
+
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            if chars.peek() == Some(&'[') {
+                chars.next();
+                while let Some(&ch) = chars.peek() {
+                    chars.next();
+                    if ch.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 fn get_hostname() -> String {
