@@ -45,7 +45,7 @@ async fn register(state: &Arc<AppState>) -> anyhow::Result<()> {
         .json(&serde_json::json!({
             "node_id": panel.node_id,
             "token": panel.token,
-            "type": "unlock",
+            "type": panel.node_type,
             "hostname": hostname,
         }))
         .send()
@@ -73,7 +73,7 @@ async fn heartbeat_loop(state: &Arc<AppState>) {
         let body = serde_json::json!({
             "node_id": panel.node_id,
             "token": panel.token,
-            "type": "unlock",
+            "type": panel.node_type,
             "dns_queries": snap.dns_queries,
             "dns_matched": snap.dns_matched,
             "sni_connections": snap.sni_connections,

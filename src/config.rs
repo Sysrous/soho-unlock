@@ -28,6 +28,8 @@ pub struct PanelConfig {
     pub node_id: u64,
     #[serde(default)]
     pub token: String,
+    #[serde(default = "default_node_type")]
+    pub node_type: String,
     #[serde(default = "default_panel_interval")]
     pub heartbeat_secs: u64,
 }
@@ -39,10 +41,13 @@ impl Default for PanelConfig {
             grpc_addr: String::new(),
             node_id: 0,
             token: String::new(),
+            node_type: default_node_type(),
             heartbeat_secs: default_panel_interval(),
         }
     }
 }
+
+fn default_node_type() -> String { "unlock".into() }
 
 fn default_panel_interval() -> u64 { 30 }
 

@@ -84,7 +84,7 @@ async fn connect_and_stream(state: &Arc<AppState>) -> anyhow::Result<()> {
         .register(RegisterRequest {
             node_id: panel.node_id as u32,
             token: panel.token.clone(),
-            node_type: "unlock".into(),
+            node_type: panel.node_type.clone(),
             hostname: get_hostname(),
             version: env!("CARGO_PKG_VERSION").into(),
         })
@@ -117,7 +117,7 @@ async fn connect_and_stream(state: &Arc<AppState>) -> anyhow::Result<()> {
         payload: Some(agent_message::Payload::Auth(AgentAuth {
             node_id: panel.node_id as u32,
             token: panel.token.clone(),
-            node_type: "unlock".into(),
+            node_type: panel.node_type.clone(),
             group_id,
         })),
     })
