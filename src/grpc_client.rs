@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
-use tonic::transport::Channel;
+use tonic::transport::{Channel, ClientTlsConfig};
 use tracing::{info, warn};
 
 use crate::state::{AppState, SourceEntry, SourceList};
@@ -46,12 +46,22 @@ pub async fn run_grpc_client(state: Arc<AppState>) {
 
 async fn connect_and_stream(state: &Arc<AppState>) -> anyhow::Result<()> {
     let panel = &state.config.panel;
-    let endpoint = format!("http://{}", panel.grpc_addr);
+    let addr = &panel.grpc_addr;
 
-    let channel = Channel::from_shared(endpoint)?
-        .connect_timeout(Duration::from_secs(10))
-        .connect()
-        .await?;
+    let (url, use_tls) = if addr.starts_with("https://") {
+        (addr.clone(), true)
+    } else if addr.starts_with("http://") {
+        (addr.clone(), false)
+    } else {
+        (format!("https://{}", addr), true)
+    };
+
+    let mut ep = Channel::from_shared(url)?
+        .connect_timeout(Duration::from_secs(10));
+    if use_tls {
+        ep = ep.tls_config(ClientTlsConfig::new())?;
+    }
+    let channel = ep.connect().await?;
 
     let mut client = AgentServiceClient::new(channel);
     info!("grpc: connected");

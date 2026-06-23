@@ -18,7 +18,7 @@ clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 arc-swap = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
-tonic = { version = "0.12", features = ["transport"] }
+tonic = { version = "0.12", features = ["transport", "tls", "tls-webpki-roots"] }
 prost = "0.13"
 tokio-stream = "0.1"
 maxminddb = { version = "0.24", optional = true }
