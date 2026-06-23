@@ -103,7 +103,12 @@ async fn heartbeat_loop(state: &Arc<AppState>) {
 
 async fn source_sync_loop(state: &Arc<AppState>) {
     let panel = &state.config.panel;
-    let sources_url = format!("{}/api/sources", panel.url.trim_end_matches('/'));
+    let sources_url = format!(
+        "{}/api/agent/sources?node_id={}&token={}",
+        panel.url.trim_end_matches('/'),
+        panel.node_id,
+        panel.token
+    );
     let client = reqwest::Client::new();
     let interval = Duration::from_secs(panel.heartbeat_secs.max(10) * 2);
 
