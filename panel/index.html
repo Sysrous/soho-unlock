@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Soho Unlock</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <div class="logo">Soho Unlock</div>
+    <a href="#" data-page="status" class="active">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      Dashboard
+    </a>
+    <a href="#" data-page="services">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+      Services
+    </a>
+    <a href="#" data-page="sources">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      Sources
+    </a>
+    <a href="#" data-page="rules">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+      Rules
+    </a>
+    <a href="#" data-page="settings">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+      Settings
+    </a>
+  </nav>
+
+  <div class="main">
+    <!-- Dashboard -->
+    <div id="page-status" class="page">
+      <h2>Dashboard</h2>
+      <div id="stat-content"><p class="muted">Loading...</p></div>
+    </div>
+
+    <!-- Services -->
+    <div id="page-services" class="page hidden">
+      <div class="page-header">
+        <h2>Services</h2>
+        <div class="page-actions">
+          <button id="init-services-btn" class="btn btn-outline">Load Builtins</button>
+          <button id="add-service-btn" class="btn btn-primary">+ Add Service</button>
+        </div>
+      </div>
+      <div id="export-bar" class="export-bar hidden"></div>
+      <div id="service-grid" class="service-grid"></div>
+    </div>
+
+    <!-- Sources -->
+    <div id="page-sources" class="page hidden">
+      <h2>Source Whitelist</h2>
+
+      <!-- Bulk import -->
+      <div class="card">
+        <div class="card-header">
+          <h3>Bulk Import</h3>
+          <span id="source-count" class="count-badge">0</span>
+        </div>
+        <p class="hint">One IP or domain per line. Domains are auto-resolved. Supports notes after a space.<br>
+          Examples: <code>103.20.1.5</code> &nbsp; <code>node-hk.example.com HK transit</code> &nbsp; <code>2001:db8::1</code></p>
+        <textarea id="bulk-source-input" placeholder="103.20.1.5 HK node
+103.20.1.6 SG node
+node-jp.example.com JP transit
+10.0.0.1
+10.0.0.2"></textarea>
+        <div class="card-actions">
+          <button id="bulk-source-btn" class="btn btn-primary">Import All</button>
+        </div>
+        <div id="bulk-result" class="bulk-result hidden"></div>
+      </div>
+
+      <!-- Single add -->
+      <div class="card">
+        <div class="card-header"><h3>Add Single</h3></div>
+        <div class="form-row">
+          <input id="add-source-addr" placeholder="IP or domain, e.g. 103.20.1.5 or node.example.com">
+          <input id="add-source-note" placeholder="Note (optional)" style="max-width:200px">
+          <button id="add-source-btn" class="btn btn-primary">Add</button>
+        </div>
+      </div>
+
+      <!-- Source list -->
+      <div class="card" id="sources-list"></div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button id="apply-fw-btn" class="btn btn-outline">Apply Firewall Rules</button>
+        <button id="clear-sources-btn" class="btn btn-danger-ghost">Clear All Sources</button>
+      </div>
+    </div>
+
+    <!-- Rules -->
+    <div id="page-rules" class="page hidden">
+      <h2>Unlock Rules</h2>
+
+      <div class="rules-split">
+        <!-- Domain column -->
+        <div class="card rules-card">
+          <div class="card-header">
+            <h3>Domains</h3>
+            <span id="domain-count" class="count-badge">0</span>
+          </div>
+          <p class="hint">One per line. Plain domains default to DOMAIN-SUFFIX.<br>Prefixes: <code>DOMAIN,</code> <code>DOMAIN-SUFFIX,</code> <code>DOMAIN-KEYWORD,</code> <code>*.</code> <code>+.</code></p>
+          <textarea id="domain-input" placeholder="netflix.com
+*.nflxvideo.net
+DOMAIN-KEYWORD,hbo
+disney.com
+hulu.com"></textarea>
+          <div class="card-actions">
+            <button id="import-domains-btn" class="btn btn-primary">Import</button>
+            <button id="clear-domains-btn" class="btn btn-danger-ghost">Clear Domains</button>
+          </div>
+          <div id="domain-list" class="rule-list"></div>
+        </div>
+
+        <!-- IP-CIDR column -->
+        <div class="card rules-card">
+          <div class="card-header">
+            <h3>IP-CIDR</h3>
+            <span id="cidr-count" class="count-badge">0</span>
+          </div>
+          <p class="hint">One per line. Plain CIDRs auto-detect v4/v6.<br>Prefix <code>IP-CIDR,</code> or <code>IP-CIDR6,</code> optional.</p>
+          <textarea id="cidr-input" placeholder="23.246.0.0/18
+185.2.220.0/22
+2607:f8b0::/32"></textarea>
+          <div class="card-actions">
+            <button id="import-cidrs-btn" class="btn btn-primary">Import</button>
+            <button id="clear-cidrs-btn" class="btn btn-danger-ghost">Clear CIDRs</button>
+          </div>
+          <div id="cidr-list" class="rule-list"></div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:16px">
+        <div class="card-header">
+          <h3>Bulk Import (mixed)</h3>
+        </div>
+        <p class="hint">Paste any format: Clash rules, plain domains, dnsmasq conf, CIDRs — auto-detected.</p>
+        <textarea id="mixed-input" placeholder="DOMAIN-SUFFIX,netflix.com
+address=/hulu.com/
+23.246.0.0/18
+disney.com"></textarea>
+        <div class="card-actions">
+          <button id="import-mixed-btn" class="btn btn-primary">Import All</button>
+          <button id="clear-all-btn" class="btn btn-danger-ghost">Clear All Rules</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Settings -->
+    <div id="page-settings" class="page hidden">
+      <h2>Settings</h2>
+      <div class="card">
+        <div class="card-header"><h3>API Token</h3></div>
+        <p class="hint">Set in config.toml on the server. Enter here to authenticate panel requests.</p>
+        <div class="form-row">
+          <input id="token-input" type="password" placeholder="Bearer token" style="max-width:360px">
+          <button id="token-save" class="btn btn-primary">Save</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><h3>Server Info</h3></div>
+        <div id="server-info" class="muted">Loading...</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Service edit modal -->
+<div id="svc-modal" class="modal hidden">
+  <div class="modal-backdrop" onclick="closeSvcModal()"></div>
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3 id="svc-modal-title">Edit Service</h3>
+      <button class="modal-close" onclick="closeSvcModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>ID <span class="hint-inline">(unique slug, cannot change after creation)</span></label>
+        <input id="svc-id" placeholder="e.g. my-service">
+      </div>
+      <div class="form-group">
+        <label>Name</label>
+        <input id="svc-name" placeholder="Display name">
+      </div>
+      <div class="form-group">
+        <label>Domains <span class="hint-inline">one per line, supports * wildcards</span></label>
+        <textarea id="svc-domains" placeholder="netflix.com
+*.nflxvideo.net
+*nflx*"></textarea>
+      </div>
+      <div class="form-group">
+        <label>IP-CIDR <span class="hint-inline">one per line</span></label>
+        <textarea id="svc-cidrs" class="short-ta" placeholder="23.246.0.0/18
+185.2.220.0/22"></textarea>
+      </div>
+      <div class="form-row" style="gap:12px">
+        <div class="form-group" style="flex:1">
+          <label>Geosite Tag</label>
+          <input id="svc-geosite" placeholder="e.g. netflix">
+        </div>
+        <div class="form-group" style="flex:1">
+          <label>GeoIP Tag</label>
+          <input id="svc-geoip" placeholder="optional">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger-ghost btn-sm" id="svc-delete-btn" onclick="deleteServiceFromModal()">Delete</button>
+      <div style="flex:1"></div>
+      <button class="btn btn-outline" onclick="closeSvcModal()">Cancel</button>
+      <button class="btn btn-primary" id="svc-save-btn" onclick="saveService()">Save</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+<script src="/app.js"></script>
+</body>
+</html>

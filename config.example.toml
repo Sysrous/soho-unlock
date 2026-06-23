@@ -1,0 +1,36 @@
+[server]
+dns_listen = "0.0.0.0:53"
+sni_listen = "0.0.0.0:443"
+# http_listen = "0.0.0.0:80"   # optional, disabled by default
+panel_listen = "0.0.0.0:9190"
+workers = 2
+
+[auth]
+token = "change-me"   # set a strong token; "change-me" disables auth
+
+[upstream]
+dns = ["1.1.1.1", "8.8.8.8"]
+timeout_ms = 3000
+
+[unlock]
+# The unlock server's own public IP (or a DDNS domain that resolves to it).
+# DNS queries matching rules will receive this IP as the answer.
+target = "1.2.3.4"
+ttl = 300
+resolve_interval_secs = 60   # re-resolve if target is a domain
+
+[firewall]
+enabled = false
+backend = "auto"   # auto | iptables | nftables | none
+
+[data]
+dir = "/etc/soho-unlock"
+# Rules go in /etc/soho-unlock/rules/*.list
+# Sources managed via panel are saved to /etc/soho-unlock/sources.json
+
+# [panel]  — optional; connect to soho-panel for centralized management
+# url = "http://127.0.0.1:8383"   # panel address
+# grpc_addr = "panel.example.com:9384"  # gRPC bidirectional stream (empty = HTTP only)
+# node_id = 1                      # this server's ID in the panel
+# token = "..."                    # token assigned by the panel on creation
+# heartbeat_secs = 30              # how often to send stats

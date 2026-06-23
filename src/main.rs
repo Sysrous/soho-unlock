@@ -1,0 +1,270 @@
+mod config;
+mod dns;
+mod export;
+mod firewall;
+mod grpc_client;
+mod panel;
+mod rules;
+mod service;
+mod sni;
+mod state;
+mod upstream;
+
+use clap::Parser;
+use std::net::Ipv4Addr;
+use std::path::PathBuf;
+use std::sync::Arc;
+use tracing::info;
+
+#[derive(Parser)]
+#[command(name = "soho-unlock", about = "DNS unlock agent with SNI proxy")]
+struct Cli {
+    #[arg(short, long, default_value = "/etc/soho-unlock/config.toml")]
+    config: PathBuf,
+    #[arg(long)]
+    install: bool,
+}
+
+#[tokio::main(worker_threads = 2)]
+async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "soho_unlock=info".parse().unwrap()),
+        )
+        .compact()
+        .init();
+
+    let cli = Cli::parse();
+
+    if cli.install {
+        return install_service();
+    }
+
+    let cfg = config::Config::load(&cli.config)?;
+    info!("loaded config from {}", cli.config.display());
+
+    std::fs::create_dir_all(&cfg.data.dir)?;
+    std::fs::create_dir_all(cfg.rules_dir())?;
+    std::fs::create_dir_all(cfg.export_dir())?;
+
+    let state = state::AppState::new(cfg);
+
+    // Load rules from custom_rules.json + rules/ directory
+    load_all_rules(&state);
+
+    // Resolve unlock target if it's a domain
+    resolve_target(&state).await;
+
+    // Firewall
+    let fw_backend = if state.config.firewall.enabled {
+        let backend = firewall::detect_backend(&state.config.firewall.backend);
+        info!("firewall backend: {backend:?}");
+        let mut ports = vec![53u16, 443];
+        if !state.config.server.http_listen.is_empty() {
+            ports.push(80);
+        }
+        firewall::apply_rules(&state, backend, &ports);
+        Some(backend)
+    } else {
+        None
+    };
+
+    info!(
+        "unlock target: {} -> {:?}",
+        state.config.unlock.target,
+        state.unlock_ip.load().ipv4
+    );
+    info!("rules loaded: {}", state.rules.load().rule_count());
+    info!("sources: {}", state.sources.load().entries.len());
+
+    let s1 = state.clone();
+    let s2 = state.clone();
+    let s3 = state.clone();
+    let s4 = state.clone();
+    let s7 = state.clone();
+    let s8 = state.clone();
+
+    let dns_handle = tokio::spawn(async move { dns::run_dns_server(s1).await });
+    let sni_handle = tokio::spawn(async move { sni::run_sni_proxy(s2).await });
+    let panel_handle = tokio::spawn(async move { panel::run_panel(s3).await });
+    let http_handle = tokio::spawn(async move { sni::run_http_proxy(s4).await });
+    let upstream_handle = tokio::spawn(async move { upstream::run_upstream(s7).await });
+    let grpc_handle = tokio::spawn(async move { grpc_client::run_grpc_client(s8).await });
+
+    // Periodic target re-resolve (for domain targets)
+    let s5 = state.clone();
+    tokio::spawn(async move {
+        let interval = s5.config.unlock.resolve_interval_secs;
+        if interval == 0 { return; }
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
+            resolve_target(&s5).await;
+        }
+    });
+
+    // Periodic source domain re-resolve
+    let s6 = state.clone();
+    tokio::spawn(async move {
+        let interval = s6.config.unlock.resolve_interval_secs;
+        if interval == 0 { return; }
+        // Initial resolve for any domain sources loaded from disk
+        state::resolve_all_domains(&s6).await;
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
+            state::resolve_all_domains(&s6).await;
+        }
+    });
+
+    info!("soho-unlock started");
+
+    tokio::signal::ctrl_c().await?;
+    info!("shutting down");
+
+    if let Some(backend) = fw_backend {
+        firewall::cleanup(backend);
+    }
+
+    drop(dns_handle);
+    drop(sni_handle);
+    drop(panel_handle);
+    drop(http_handle);
+    drop(upstream_handle);
+    drop(grpc_handle);
+    Ok(())
+}
+
+pub fn reload_rules(state: &Arc<state::AppState>) {
+    load_all_rules(state);
+}
+
+fn load_all_rules(state: &Arc<state::AppState>) {
+    let mut all_entries = Vec::new();
+
+    // Load from custom_rules.json
+    let custom_path = state.config.custom_rules_path();
+    if custom_path.exists() {
+        if let Ok(text) = std::fs::read_to_string(&custom_path) {
+            if let Ok(entries) = serde_json::from_str::<Vec<rules::RuleEntry>>(&text) {
+                info!("loaded {} custom rules", entries.len());
+                all_entries.extend(entries);
+            }
+        }
+    }
+
+    // Load from rules/ directory
+    let rules_dir = state.config.rules_dir();
+    if let Ok(dir) = std::fs::read_dir(&rules_dir) {
+        for entry in dir.flatten() {
+            let path = entry.path();
+            if path.extension().map_or(false, |e| {
+                e == "list" || e == "txt" || e == "conf" || e == "yaml"
+            }) {
+                match rules::load_rules_from_file(&path) {
+                    Ok(entries) => {
+                        info!("loaded {} rules from {}", entries.len(), path.display());
+                        all_entries.extend(entries);
+                    }
+                    Err(e) => tracing::warn!("failed to load {}: {e}", path.display()),
+                }
+            }
+        }
+    }
+
+    let mut set = rules::RuleSet::from_entries(all_entries);
+    set.rebuild();
+    state.rules.store(Arc::new(set));
+}
+
+async fn resolve_target(state: &Arc<state::AppState>) {
+    let raw = &state.config.unlock.target;
+    if let Ok(ip) = raw.parse::<Ipv4Addr>() {
+        state.unlock_ip.store(Arc::new(state::ResolvedTarget {
+            ipv4: Some(ip),
+            raw: raw.clone(),
+        }));
+        return;
+    }
+    // It's a domain — resolve it
+    match tokio::net::lookup_host(format!("{raw}:0")).await {
+        Ok(mut addrs) => {
+            if let Some(addr) = addrs.find(|a| a.is_ipv4()) {
+                if let std::net::IpAddr::V4(v4) = addr.ip() {
+                    info!("resolved unlock target {raw} -> {v4}");
+                    state.unlock_ip.store(Arc::new(state::ResolvedTarget {
+                        ipv4: Some(v4),
+                        raw: raw.clone(),
+                    }));
+                    return;
+                }
+            }
+            tracing::warn!("no IPv4 for unlock target {raw}");
+        }
+        Err(e) => tracing::warn!("failed to resolve unlock target {raw}: {e}"),
+    }
+}
+
+fn install_service() -> anyhow::Result<()> {
+    // Detect init system and install appropriate service file
+    if PathBuf::from("/run/systemd/system").exists() {
+        install_systemd()?;
+    } else if PathBuf::from("/sbin/openrc").exists() || PathBuf::from("/sbin/rc-service").exists() {
+        install_openrc()?;
+    } else {
+        println!("Unknown init system. Manual installation required.");
+        println!("Binary: copy soho-unlock to /usr/local/bin/");
+        println!("Config: /etc/soho-unlock/config.toml");
+    }
+    Ok(())
+}
+
+fn install_systemd() -> anyhow::Result<()> {
+    let unit = r#"[Unit]
+Description=Soho Unlock - DNS unlock agent
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/soho-unlock -c /etc/soho-unlock/config.toml
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+"#;
+    let path = "/etc/systemd/system/soho-unlock.service";
+    std::fs::write(path, unit)?;
+    println!("Installed systemd service: {path}");
+    println!("  systemctl daemon-reload");
+    println!("  systemctl enable --now soho-unlock");
+    Ok(())
+}
+
+fn install_openrc() -> anyhow::Result<()> {
+    let script = r#"#!/sbin/openrc-run
+name="soho-unlock"
+description="Soho Unlock - DNS unlock agent"
+command="/usr/local/bin/soho-unlock"
+command_args="-c /etc/soho-unlock/config.toml"
+command_background=true
+pidfile="/run/${RC_SVCNAME}.pid"
+start_stop_daemon_args="--stdout /var/log/soho-unlock.log --stderr /var/log/soho-unlock.log"
+
+depend() {
+    need net
+    after firewall
+}
+"#;
+    let path = "/etc/init.d/soho-unlock";
+    std::fs::write(path, script)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))?;
+    }
+    println!("Installed OpenRC service: {path}");
+    println!("  rc-update add soho-unlock default");
+    println!("  rc-service soho-unlock start");
+    Ok(())
+}

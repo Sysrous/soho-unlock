@@ -1,0 +1,180 @@
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Config {
+    #[serde(default)]
+    pub server: ServerConfig,
+    #[serde(default)]
+    pub auth: AuthConfig,
+    #[serde(default)]
+    pub upstream: UpstreamConfig,
+    pub unlock: UnlockConfig,
+    #[serde(default)]
+    pub firewall: FirewallConfig,
+    #[serde(default)]
+    pub data: DataConfig,
+    #[serde(default)]
+    pub panel: PanelConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PanelConfig {
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub grpc_addr: String,
+    #[serde(default)]
+    pub node_id: u64,
+    #[serde(default)]
+    pub token: String,
+    #[serde(default = "default_panel_interval")]
+    pub heartbeat_secs: u64,
+}
+
+impl Default for PanelConfig {
+    fn default() -> Self {
+        Self {
+            url: String::new(),
+            grpc_addr: String::new(),
+            node_id: 0,
+            token: String::new(),
+            heartbeat_secs: default_panel_interval(),
+        }
+    }
+}
+
+fn default_panel_interval() -> u64 { 30 }
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ServerConfig {
+    #[serde(default = "default_dns_listen")]
+    pub dns_listen: String,
+    #[serde(default = "default_sni_listen")]
+    pub sni_listen: String,
+    #[serde(default)]
+    pub http_listen: String,
+    #[serde(default = "default_panel_listen")]
+    pub panel_listen: String,
+    #[serde(default = "default_workers")]
+    pub workers: usize,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AuthConfig {
+    #[serde(default = "default_token")]
+    pub token: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct UpstreamConfig {
+    #[serde(default = "default_dns_servers")]
+    pub dns: Vec<String>,
+    #[serde(default = "default_dns_timeout")]
+    pub timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct UnlockConfig {
+    pub target: String,
+    #[serde(default = "default_ttl")]
+    pub ttl: u32,
+    #[serde(default = "default_resolve_interval")]
+    pub resolve_interval_secs: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct FirewallConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_fw_backend")]
+    pub backend: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DataConfig {
+    #[serde(default = "default_data_dir")]
+    pub dir: PathBuf,
+}
+
+impl Config {
+    pub fn load(path: &Path) -> anyhow::Result<Self> {
+        let content = std::fs::read_to_string(path)?;
+        let config: Config = toml::from_str(&content)?;
+        Ok(config)
+    }
+
+    pub fn sources_path(&self) -> PathBuf {
+        self.data.dir.join("sources.json")
+    }
+
+    pub fn rules_dir(&self) -> PathBuf {
+        self.data.dir.join("rules")
+    }
+
+    pub fn custom_rules_path(&self) -> PathBuf {
+        self.data.dir.join("custom_rules.json")
+    }
+
+    pub fn services_path(&self) -> PathBuf {
+        self.data.dir.join("services.json")
+    }
+
+    pub fn export_dir(&self) -> PathBuf {
+        self.data.dir.join("export")
+    }
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            dns_listen: default_dns_listen(),
+            sni_listen: default_sni_listen(),
+            http_listen: String::new(),
+            panel_listen: default_panel_listen(),
+            workers: default_workers(),
+        }
+    }
+}
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self { token: default_token() }
+    }
+}
+
+impl Default for UpstreamConfig {
+    fn default() -> Self {
+        Self {
+            dns: default_dns_servers(),
+            timeout_ms: default_dns_timeout(),
+        }
+    }
+}
+
+impl Default for FirewallConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            backend: default_fw_backend(),
+        }
+    }
+}
+
+impl Default for DataConfig {
+    fn default() -> Self {
+        Self { dir: default_data_dir() }
+    }
+}
+
+fn default_dns_listen() -> String { "0.0.0.0:53".into() }
+fn default_sni_listen() -> String { "0.0.0.0:443".into() }
+fn default_panel_listen() -> String { "0.0.0.0:9190".into() }
+fn default_workers() -> usize { 2 }
+fn default_token() -> String { "change-me".into() }
+fn default_dns_servers() -> Vec<String> { vec!["1.1.1.1".into(), "8.8.8.8".into()] }
+fn default_dns_timeout() -> u64 { 3000 }
+fn default_ttl() -> u32 { 300 }
+fn default_resolve_interval() -> u64 { 60 }
+fn default_fw_backend() -> String { "auto".into() }
+fn default_data_dir() -> PathBuf { PathBuf::from("/etc/soho-unlock") }

@@ -1,0 +1,96 @@
+syntax = "proto3";
+
+package agent;
+
+service AgentService {
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  rpc PullConfig(PullRequest) returns (ConfigPush);
+  rpc ReportIPs(ReportIPsRequest) returns (ReportIPsResponse);
+  rpc Connect(stream AgentMessage) returns (stream ServerMessage);
+}
+
+message RegisterRequest {
+  uint32 node_id   = 1;
+  string token     = 2;
+  string node_type = 3;
+  string hostname  = 4;
+  string version   = 5;
+}
+
+message RegisterResponse {
+  bool   ok       = 1;
+  string message  = 2;
+  uint32 group_id = 3;
+}
+
+message PullRequest {
+  uint32 node_id   = 1;
+  string token     = 2;
+  string node_type = 3;
+}
+
+message ReportIPsRequest {
+  uint32 node_id   = 1;
+  string token     = 2;
+  string ipv4      = 3;
+  string ipv6      = 4;
+}
+
+message ReportIPsResponse {
+  bool ok = 1;
+}
+
+message AgentMessage {
+  oneof payload {
+    AgentAuth       auth      = 1;
+    AgentHeartbeat  heartbeat = 2;
+    AgentIPReport   ip_report = 3;
+  }
+}
+
+message AgentAuth {
+  uint32 node_id   = 1;
+  string token     = 2;
+  string node_type = 3;
+  uint32 group_id  = 4;
+}
+
+message AgentHeartbeat {
+  uint64 dns_queries     = 1;
+  uint64 dns_matched     = 2;
+  uint64 sni_connections = 3;
+  uint64 uptime_secs     = 4;
+  string config_hash     = 5;
+}
+
+message AgentIPReport {
+  string ipv4 = 1;
+  string ipv6 = 2;
+}
+
+message ServerMessage {
+  oneof payload {
+    ConfigPush    config    = 1;
+    ServerCommand command   = 2;
+    ServerAck     ack       = 3;
+  }
+}
+
+message ConfigPush {
+  string config_hash       = 1;
+  string dns_json          = 2;
+  repeated string sources  = 3;
+  repeated string blacklist = 4;
+  int64  timestamp         = 5;
+  uint32 group_id          = 6;
+}
+
+message ServerCommand {
+  string action = 1;
+  string data   = 2;
+}
+
+message ServerAck {
+  bool   ok      = 1;
+  string message = 2;
+}
