@@ -40,6 +40,9 @@ if [[ "${1:-}" == "upgrade" ]]; then
     chmod +x "$TMP"
     systemctl stop soho-unlock 2>/dev/null || true
     mv "$TMP" "$INSTALL_DIR/$BIN_NAME"
+    # Also update ut
+    UT_ARCH="amd64"; [[ "$ARCH" == aarch64 || "$ARCH" == arm64 ]] && UT_ARCH="arm64"
+    curl -fSL -o "$INSTALL_DIR/ut" "https://github.com/oneclickvirt/UnlockTests/releases/latest/download/ut-linux-${UT_ARCH}" && chmod +x "$INSTALL_DIR/ut" && echo "ut updated" || echo "ut update failed (non-fatal)"
     systemctl start soho-unlock
     NEW_VER=$("$INSTALL_DIR/$BIN_NAME" --version 2>/dev/null || echo "$VERSION")
     echo "Upgraded: $OLD_VER -> $NEW_VER (config preserved)"
@@ -84,8 +87,8 @@ fi
 # --- detect arch ---
 ARCH=$(uname -m)
 case "$ARCH" in
-    x86_64|amd64)   BINARY="soho-unlock-linux-amd64" ;;
-    aarch64|arm64)   BINARY="soho-unlock-linux-arm64" ;;
+    x86_64|amd64)   BINARY="soho-unlock-linux-amd64"; UT_BINARY="ut-linux-amd64" ;;
+    aarch64|arm64)   BINARY="soho-unlock-linux-arm64"; UT_BINARY="ut-linux-arm64" ;;
     *)               echo "Unsupported architecture: $ARCH"; exit 1 ;;
 esac
 
@@ -121,6 +124,16 @@ fi
 mkdir -p "$INSTALL_DIR"
 mv "$TMP" "$INSTALL_DIR/$BIN_NAME"
 echo "Installed $INSTALL_DIR/$BIN_NAME"
+
+# --- install ut (unlock test tool) ---
+UT_URL="https://github.com/oneclickvirt/UnlockTests/releases/latest/download/$UT_BINARY"
+echo "Downloading ut ($UT_BINARY) ..."
+if curl -fSL -o "$INSTALL_DIR/ut" "$UT_URL"; then
+    chmod +x "$INSTALL_DIR/ut"
+    echo "Installed $INSTALL_DIR/ut"
+else
+    echo "Warning: ut download failed (non-fatal, unlock test won't work)"
+fi
 
 # --- generate config ---
 mkdir -p "$CONFIG_DIR"

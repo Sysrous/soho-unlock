@@ -275,9 +275,21 @@ fn handle_command(state: &Arc<AppState>, cmd: &pb::ServerCommand, tx: mpsc::Send
     }
 }
 
+fn find_ut() -> String {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let local = dir.join("ut");
+            if local.exists() { return local.to_string_lossy().into_owned(); }
+        }
+    }
+    "ut".into()
+}
+
 async fn run_ut(flags: &str) -> String {
     use tokio::process::Command;
-    let cmd_str = format!("ut {}", flags);
+
+    let ut_bin = find_ut();
+    let cmd_str = format!("{} {}", ut_bin, flags);
     match Command::new("sh")
         .args(["-c", &cmd_str])
         .env("NO_COLOR", "1")

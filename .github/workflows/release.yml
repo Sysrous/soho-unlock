@@ -47,7 +47,15 @@ jobs:
       - name: Rename binary
         run: cp target/${{ matrix.target }}/release/soho-unlock ${{ matrix.binary }}
 
+      - name: Download ut binary
+        run: |
+          ARCH=$(echo "${{ matrix.binary }}" | grep -o 'amd64\|arm64')
+          curl -sL -o ut-linux-${ARCH} "https://github.com/oneclickvirt/UnlockTests/releases/latest/download/ut-linux-${ARCH}"
+          chmod +x ut-linux-${ARCH}
+
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.binary }}
+          files: |
+            ${{ matrix.binary }}
+            ut-linux-*
