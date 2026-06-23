@@ -8,8 +8,6 @@ mod rules;
 mod service;
 mod sni;
 mod state;
-mod upstream;
-
 use clap::Parser;
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
@@ -84,14 +82,12 @@ async fn main() -> anyhow::Result<()> {
     let s3 = state.clone();
     let s4 = state.clone();
     let s7 = state.clone();
-    let s8 = state.clone();
 
     let dns_handle = tokio::spawn(async move { dns::run_dns_server(s1).await });
     let sni_handle = tokio::spawn(async move { sni::run_sni_proxy(s2).await });
     let panel_handle = tokio::spawn(async move { panel::run_panel(s3).await });
     let http_handle = tokio::spawn(async move { sni::run_http_proxy(s4).await });
-    let upstream_handle = tokio::spawn(async move { upstream::run_upstream(s7).await });
-    let grpc_handle = tokio::spawn(async move { grpc_client::run_grpc_client(s8).await });
+    let grpc_handle = tokio::spawn(async move { grpc_client::run_grpc_client(s7).await });
 
     // Periodic target re-resolve (for domain targets / IP refresh)
     let s5 = state.clone();
@@ -131,7 +127,6 @@ async fn main() -> anyhow::Result<()> {
     drop(sni_handle);
     drop(panel_handle);
     drop(http_handle);
-    drop(upstream_handle);
     drop(grpc_handle);
     Ok(())
 }
