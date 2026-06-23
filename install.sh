@@ -1,0 +1,132 @@
+#!/bin/bash
+set -euo pipefail
+
+REPO="Sysrous/soho-unlock"
+INSTALL_DIR="/usr/local/bin"
+CONFIG_DIR="/etc/soho-unlock"
+CONFIG_FILE="$CONFIG_DIR/config.toml"
+BIN_NAME="soho-unlock"
+
+# --- parse args ---
+PANEL_URL=""
+NODE_ID=""
+TOKEN=""
+NODE_TYPE="dns"
+VERSION="latest"
+UNLOCK_TARGET=""
+
+usage() {
+    echo "Usage: bash <(curl -sL URL) --panel URL --node-id N --token T [--type dns|transit] [--target IP] [--version vX.Y.Z]"
+    exit 1
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --panel)    PANEL_URL="$2"; shift 2 ;;
+        --node-id)  NODE_ID="$2"; shift 2 ;;
+        --token)    TOKEN="$2"; shift 2 ;;
+        --type)     NODE_TYPE="$2"; shift 2 ;;
+        --target)   UNLOCK_TARGET="$2"; shift 2 ;;
+        --version)  VERSION="$2"; shift 2 ;;
+        *)          echo "Unknown option: $1"; usage ;;
+    esac
+done
+
+if [[ -z "$PANEL_URL" || -z "$NODE_ID" || -z "$TOKEN" ]]; then
+    echo "Error: --panel, --node-id, --token are required"
+    usage
+fi
+
+# --- detect arch ---
+ARCH=$(uname -m)
+case "$ARCH" in
+    x86_64|amd64)   BINARY="soho-unlock-linux-amd64" ;;
+    aarch64|arm64)   BINARY="soho-unlock-linux-arm64" ;;
+    *)               echo "Unsupported architecture: $ARCH"; exit 1 ;;
+esac
+
+# --- resolve version ---
+if [[ "$VERSION" == "latest" ]]; then
+    echo "Fetching latest release..."
+    VERSION=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"//;s/".*//')
+    if [[ -z "$VERSION" ]]; then
+        echo "Failed to fetch latest version, falling back to v0.1.1"
+        VERSION="v0.1.1"
+    fi
+fi
+echo "Version: $VERSION"
+
+# --- download ---
+DOWNLOAD_URL="https://github.com/$REPO/releases/download/$VERSION/$BINARY"
+echo "Downloading $DOWNLOAD_URL ..."
+TMP=$(mktemp)
+if ! curl -fSL -o "$TMP" "$DOWNLOAD_URL"; then
+    echo "Download failed. Check version and network."
+    rm -f "$TMP"
+    exit 1
+fi
+chmod +x "$TMP"
+
+# --- stop existing service ---
+if systemctl is-active --quiet soho-unlock 2>/dev/null; then
+    echo "Stopping existing soho-unlock service..."
+    systemctl stop soho-unlock
+fi
+
+# --- install binary ---
+mkdir -p "$INSTALL_DIR"
+mv "$TMP" "$INSTALL_DIR/$BIN_NAME"
+echo "Installed $INSTALL_DIR/$BIN_NAME"
+
+# --- generate config ---
+mkdir -p "$CONFIG_DIR"
+if [[ -f "$CONFIG_FILE" ]]; then
+    echo "Config already exists at $CONFIG_FILE, backing up..."
+    cp "$CONFIG_FILE" "$CONFIG_FILE.bak.$(date +%s)"
+fi
+
+# default unlock target placeholder
+if [[ -z "$UNLOCK_TARGET" ]]; then
+    UNLOCK_TARGET="0.0.0.0"
+fi
+
+cat > "$CONFIG_FILE" <<TOML
+[server]
+dns_listen = "0.0.0.0:53"
+sni_listen = "0.0.0.0:443"
+panel_listen = "127.0.0.1:9190"
+
+[auth]
+token = "change-me"
+
+[upstream]
+dns = ["1.1.1.1", "8.8.8.8"]
+
+[unlock]
+target = "$UNLOCK_TARGET"
+
+[firewall]
+enabled = false
+
+[panel]
+url = "$PANEL_URL"
+node_id = $NODE_ID
+token = "$TOKEN"
+heartbeat_secs = 30
+TOML
+
+echo "Config written to $CONFIG_FILE"
+
+# --- install systemd service ---
+"$INSTALL_DIR/$BIN_NAME" --install
+systemctl daemon-reload
+systemctl enable --now soho-unlock
+
+echo ""
+echo "=== soho-unlock installed ==="
+echo "Binary:  $INSTALL_DIR/$BIN_NAME"
+echo "Config:  $CONFIG_FILE"
+echo "Service: systemctl status soho-unlock"
+echo ""
+echo "Edit $CONFIG_FILE to set [unlock] target and [firewall] if needed, then:"
+echo "  systemctl restart soho-unlock"
