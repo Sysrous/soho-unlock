@@ -16,6 +16,7 @@ pub struct AppState {
     pub sources: ArcSwap<SourceList>,
     pub services: ArcSwap<ServiceList>,
     pub unlock_ip: ArcSwap<ResolvedTarget>,
+    pub ip_detect_urls: ArcSwap<Vec<String>>,
     pub stats: Stats,
 }
 
@@ -225,6 +226,7 @@ impl AppState {
             sources: ArcSwap::from_pointee(sources),
             services: ArcSwap::from_pointee(services),
             unlock_ip: ArcSwap::from_pointee(target),
+            ip_detect_urls: ArcSwap::from_pointee(Vec::new()),
             stats: Stats::new(),
         })
     }

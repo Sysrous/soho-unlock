@@ -53,8 +53,9 @@ async fn main() -> anyhow::Result<()> {
     // Load rules from custom_rules.json + rules/ directory
     load_all_rules(&state);
 
-    // Resolve unlock target if it's a domain
-    resolve_target(&state).await;
+    // Fetch IP detect URLs from panel, then resolve unlock target
+    let ip_urls = fetch_ip_detect_urls(&state).await;
+    resolve_target(&state, &ip_urls).await;
 
     // Firewall
     let fw_backend = if state.config.firewall.enabled {
@@ -92,14 +93,15 @@ async fn main() -> anyhow::Result<()> {
     let upstream_handle = tokio::spawn(async move { upstream::run_upstream(s7).await });
     let grpc_handle = tokio::spawn(async move { grpc_client::run_grpc_client(s8).await });
 
-    // Periodic target re-resolve (for domain targets)
+    // Periodic target re-resolve (for domain targets / IP refresh)
     let s5 = state.clone();
     tokio::spawn(async move {
         let interval = s5.config.unlock.resolve_interval_secs;
         if interval == 0 { return; }
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
-            resolve_target(&s5).await;
+            let urls = s5.ip_detect_urls.load();
+            resolve_target(&s5, &urls).await;
         }
     });
 
@@ -176,12 +178,48 @@ fn load_all_rules(state: &Arc<state::AppState>) {
     state.rules.store(Arc::new(set));
 }
 
-async fn resolve_target(state: &Arc<state::AppState>) {
+async fn fetch_ip_detect_urls(state: &Arc<state::AppState>) -> Vec<String> {
+    let panel = &state.config.panel;
+    if panel.url.is_empty() || panel.node_id == 0 || panel.token.is_empty() {
+        return Vec::new();
+    }
+    let url = format!(
+        "{}/api/agent/config?node_id={}&token={}",
+        panel.url.trim_end_matches('/'),
+        panel.node_id,
+        panel.token
+    );
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap_or_default();
+    match client.get(&url).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            if let Ok(data) = resp.json::<serde_json::Value>().await {
+                if let Some(arr) = data.get("ip_detect_urls").and_then(|v| v.as_array()) {
+                    let urls: Vec<String> = arr
+                        .iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect();
+                    if !urls.is_empty() {
+                        info!("panel: got {} IP detect URLs", urls.len());
+                        state.ip_detect_urls.store(Arc::new(urls.clone()));
+                        return urls;
+                    }
+                }
+            }
+        }
+        Ok(resp) => tracing::warn!("panel config HTTP {}", resp.status()),
+        Err(e) => tracing::warn!("panel config fetch error: {e}"),
+    }
+    Vec::new()
+}
+
+async fn resolve_target(state: &Arc<state::AppState>, panel_urls: &[String]) {
     let raw = &state.config.unlock.target;
 
-    // Auto-detect public IP when target is placeholder or empty
     if raw.is_empty() || raw == "0.0.0.0" {
-        if let Some(ip) = detect_public_ip().await {
+        if let Some(ip) = detect_public_ip(panel_urls).await {
             info!("auto-detected public IP: {ip}");
             state.unlock_ip.store(Arc::new(state::ResolvedTarget {
                 ipv4: Some(ip),
@@ -200,7 +238,6 @@ async fn resolve_target(state: &Arc<state::AppState>) {
         }));
         return;
     }
-    // It's a domain — resolve it
     match tokio::net::lookup_host(format!("{raw}:0")).await {
         Ok(mut addrs) => {
             if let Some(addr) = addrs.find(|a| a.is_ipv4()) {
@@ -219,8 +256,8 @@ async fn resolve_target(state: &Arc<state::AppState>) {
     }
 }
 
-async fn detect_public_ip() -> Option<Ipv4Addr> {
-    let urls = [
+async fn detect_public_ip(panel_urls: &[String]) -> Option<Ipv4Addr> {
+    let builtins = [
         "https://api.ipify.org",
         "https://ifconfig.me/ip",
         "https://icanhazip.com",
@@ -229,8 +266,9 @@ async fn detect_public_ip() -> Option<Ipv4Addr> {
         .timeout(std::time::Duration::from_secs(5))
         .build()
         .ok()?;
-    for url in &urls {
-        if let Ok(resp) = client.get(*url).send().await {
+    // Panel-configured URLs first, then built-in fallbacks
+    for url in panel_urls.iter().map(|s| s.as_str()).chain(builtins.iter().copied()) {
+        if let Ok(resp) = client.get(url).send().await {
             if let Ok(text) = resp.text().await {
                 if let Ok(ip) = text.trim().parse::<Ipv4Addr>() {
                     return Some(ip);
