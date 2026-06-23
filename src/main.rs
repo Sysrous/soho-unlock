@@ -138,6 +138,18 @@ pub fn reload_rules(state: &Arc<state::AppState>) {
 fn load_all_rules(state: &Arc<state::AppState>) {
     let mut all_entries = Vec::new();
 
+    // Load from dns_json_dir/dns.json (persisted from gRPC push)
+    let kimir_path = state.config.dns_json_path();
+    if kimir_path.exists() {
+        if let Ok(text) = std::fs::read_to_string(&kimir_path) {
+            let entries = grpc_client::parse_dns_json_to_rules(&text);
+            if !entries.is_empty() {
+                info!("loaded {} rules from {}", entries.len(), kimir_path.display());
+                all_entries.extend(entries);
+            }
+        }
+    }
+
     // Load from custom_rules.json
     let custom_path = state.config.custom_rules_path();
     if custom_path.exists() {

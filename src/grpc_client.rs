@@ -226,14 +226,21 @@ fn apply_config_push(state: &Arc<AppState>, cfg: &pb::ConfigPush) {
     }
 
     if !cfg.dns_json.is_empty() {
-        match serde_json::from_str::<Vec<crate::rules::RuleEntry>>(&cfg.dns_json) {
-            Ok(entries) => {
-                let mut set = crate::rules::RuleSet::from_entries(entries);
-                set.rebuild();
-                state.rules.store(Arc::new(set));
-                info!("grpc: rules updated");
-            }
-            Err(e) => warn!("grpc: dns_json parse error: {e}"),
+        let entries = parse_dns_json_to_rules(&cfg.dns_json);
+        if !entries.is_empty() {
+            let count = entries.len();
+            let mut set = crate::rules::RuleSet::from_entries(entries);
+            set.rebuild();
+            state.rules.store(Arc::new(set));
+            info!("grpc: rules updated ({count} entries)");
+        }
+        let dir = &state.config.data.dns_json_dir;
+        let _ = std::fs::create_dir_all(dir);
+        let path = dir.join("dns.json");
+        if let Err(e) = std::fs::write(&path, &cfg.dns_json) {
+            warn!("grpc: failed to write {}: {e}", path.display());
+        } else {
+            info!("grpc: wrote {}", path.display());
         }
     }
 }
@@ -316,4 +323,46 @@ fn get_hostname() -> String {
     std::env::var("HOSTNAME")
         .or_else(|_| std::env::var("COMPUTERNAME"))
         .unwrap_or_else(|_| "unknown".into())
+}
+
+/// Parse dns_json string into RuleEntry list.
+/// Supports both nfdns format ({"servers":[...],"tag":"dns_inbound"})
+/// and legacy agent-rules format ([{"rule_type":"...","value":"..."}]).
+pub fn parse_dns_json_to_rules(raw: &str) -> Vec<crate::rules::RuleEntry> {
+    // Try nfdns format first
+    if let Ok(obj) = serde_json::from_str::<serde_json::Value>(raw) {
+        if let Some(servers) = obj.get("servers").and_then(|v| v.as_array()) {
+            let mut entries = Vec::new();
+            for srv in servers {
+                let domains = match srv.get("domains").and_then(|v| v.as_array()) {
+                    Some(d) => d,
+                    None => continue, // plain string like "1.1.1.1", skip
+                };
+                for d in domains {
+                    let domain = match d.as_str() {
+                        Some(s) => s,
+                        None => continue,
+                    };
+                    if domain.starts_with("geosite:") {
+                        continue; // agent has no geosite db
+                    }
+                    entries.push(crate::rules::RuleEntry {
+                        rule_type: "DOMAIN-SUFFIX".into(),
+                        value: domain.into(),
+                        tag: String::new(),
+                    });
+                }
+            }
+            if !entries.is_empty() {
+                return entries;
+            }
+        }
+        // Try legacy array format
+        if obj.is_array() {
+            if let Ok(legacy) = serde_json::from_str::<Vec<crate::rules::RuleEntry>>(raw) {
+                return legacy;
+            }
+        }
+    }
+    Vec::new()
 }

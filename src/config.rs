@@ -100,6 +100,8 @@ pub struct FirewallConfig {
 pub struct DataConfig {
     #[serde(default = "default_data_dir")]
     pub dir: PathBuf,
+    #[serde(default = "default_dns_json_dir")]
+    pub dns_json_dir: PathBuf,
 }
 
 impl Config {
@@ -127,6 +129,10 @@ impl Config {
 
     pub fn export_dir(&self) -> PathBuf {
         self.data.dir.join("export")
+    }
+
+    pub fn dns_json_path(&self) -> PathBuf {
+        self.data.dns_json_dir.join("dns.json")
     }
 }
 
@@ -168,7 +174,7 @@ impl Default for FirewallConfig {
 
 impl Default for DataConfig {
     fn default() -> Self {
-        Self { dir: default_data_dir() }
+        Self { dir: default_data_dir(), dns_json_dir: default_dns_json_dir() }
     }
 }
 
@@ -183,3 +189,4 @@ fn default_ttl() -> u32 { 300 }
 fn default_resolve_interval() -> u64 { 60 }
 fn default_fw_backend() -> String { "auto".into() }
 fn default_data_dir() -> PathBuf { PathBuf::from("/etc/soho-unlock") }
+fn default_dns_json_dir() -> PathBuf { PathBuf::from("/etc/KimiR") }
