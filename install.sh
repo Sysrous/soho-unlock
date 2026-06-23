@@ -21,6 +21,31 @@ if [[ "${1:-}" == "uninstall" ]]; then
     exit 0
 fi
 
+# --- upgrade ---
+if [[ "${1:-}" == "upgrade" ]]; then
+    VERSION="${2:-latest}"
+    ARCH=$(uname -m)
+    case "$ARCH" in
+        x86_64|amd64)   BINARY="soho-unlock-linux-amd64" ;;
+        aarch64|arm64)  BINARY="soho-unlock-linux-arm64" ;;
+        *)              echo "Unsupported architecture: $ARCH"; exit 1 ;;
+    esac
+    if [[ "$VERSION" == "latest" ]]; then
+        VERSION=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"//;s/".*//')
+    fi
+    echo "Upgrading to $VERSION ..."
+    OLD_VER=$("$INSTALL_DIR/$BIN_NAME" --version 2>/dev/null || echo "unknown")
+    TMP=$(mktemp)
+    curl -fSL -o "$TMP" "https://github.com/$REPO/releases/download/$VERSION/$BINARY"
+    chmod +x "$TMP"
+    systemctl stop soho-unlock 2>/dev/null || true
+    mv "$TMP" "$INSTALL_DIR/$BIN_NAME"
+    systemctl start soho-unlock
+    NEW_VER=$("$INSTALL_DIR/$BIN_NAME" --version 2>/dev/null || echo "$VERSION")
+    echo "Upgraded: $OLD_VER -> $NEW_VER (config preserved)"
+    exit 0
+fi
+
 # --- parse args ---
 PANEL_URL=""
 GRPC_ADDR=""
@@ -33,6 +58,7 @@ UNLOCK_TARGET=""
 usage() {
     echo "Usage:"
     echo "  Install:   bash <(curl -sL URL) --panel URL --node-id N --token T [--grpc URL] [--type dns|transit] [--target IP] [--version vX.Y.Z]"
+    echo "  Upgrade:   bash <(curl -sL URL) upgrade [vX.Y.Z]"
     echo "  Uninstall: bash <(curl -sL URL) uninstall"
     exit 1
 }
