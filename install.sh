@@ -6,6 +6,20 @@ INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/soho-unlock"
 CONFIG_FILE="$CONFIG_DIR/config.toml"
 BIN_NAME="soho-unlock"
+SERVICE_FILE="/etc/systemd/system/soho-unlock.service"
+
+# --- uninstall ---
+if [[ "${1:-}" == "uninstall" ]]; then
+    echo "Uninstalling soho-unlock..."
+    systemctl stop soho-unlock 2>/dev/null || true
+    systemctl disable soho-unlock 2>/dev/null || true
+    rm -f "$SERVICE_FILE"
+    rm -f "$INSTALL_DIR/$BIN_NAME"
+    systemctl daemon-reload
+    echo "Removed binary and service."
+    echo "Config preserved at $CONFIG_DIR (delete manually if not needed)"
+    exit 0
+fi
 
 # --- parse args ---
 PANEL_URL=""
@@ -16,7 +30,9 @@ VERSION="latest"
 UNLOCK_TARGET=""
 
 usage() {
-    echo "Usage: bash <(curl -sL URL) --panel URL --node-id N --token T [--type dns|transit] [--target IP] [--version vX.Y.Z]"
+    echo "Usage:"
+    echo "  Install:   bash <(curl -sL URL) --panel URL --node-id N --token T [--type dns|transit] [--target IP] [--version vX.Y.Z]"
+    echo "  Uninstall: bash <(curl -sL URL) uninstall"
     exit 1
 }
 
