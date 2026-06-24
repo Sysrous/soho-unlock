@@ -1,7 +1,7 @@
 use arc_swap::ArcSwap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -27,7 +27,7 @@ pub struct DnsForwardMap {
 
 struct ForwardEntry {
     domains: Vec<String>,
-    addr: SocketAddr,
+    ip: Ipv4Addr,
 }
 
 impl Default for DnsForwardMap {
@@ -44,7 +44,10 @@ impl DnsForwardMap {
                         Some(a) => a,
                         None => continue,
                     };
-                    let port = srv.get("port").and_then(|v| v.as_u64()).unwrap_or(53) as u16;
+                    let ip: Ipv4Addr = match addr_str.parse() {
+                        Ok(ip) => ip,
+                        Err(_) => continue,
+                    };
                     let domains = match srv.get("domains").and_then(|v| v.as_array()) {
                         Some(d) if !d.is_empty() => d,
                         _ => continue,
@@ -56,21 +59,19 @@ impl DnsForwardMap {
                         .map(|s| s.to_lowercase())
                         .collect();
                     if domain_list.is_empty() { continue; }
-                    if let Ok(addr) = format!("{}:{}", addr_str, port).parse::<SocketAddr>() {
-                        entries.push(ForwardEntry { domains: domain_list, addr });
-                    }
+                    entries.push(ForwardEntry { domains: domain_list, ip });
                 }
             }
         }
         Self { entries }
     }
 
-    pub fn lookup(&self, domain: &str) -> Option<SocketAddr> {
+    pub fn lookup(&self, domain: &str) -> Option<Ipv4Addr> {
         let domain = domain.to_lowercase();
         for entry in &self.entries {
             for d in &entry.domains {
                 if domain == *d || domain.ends_with(&format!(".{}", d)) {
-                    return Some(entry.addr);
+                    return Some(entry.ip);
                 }
             }
         }
