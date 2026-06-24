@@ -201,6 +201,20 @@ for svc in dnsmasq sniproxy smartdns mosdns; do
     pkill -x "$svc" 2>/dev/null || true
 done
 
+# --- open firewall ports 53 (DNS) and 443 (SNI) ---
+# The agent serves DNS on :53 and the SNI relay on :443. If a host firewall is
+# active it must allow them inbound or the node is unreachable (cloud security
+# groups are separate — open 53/tcp+udp and 443/tcp there too if you use them).
+if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi active; then
+    ufw allow 53 >/dev/null 2>&1 || true
+    ufw allow 443/tcp >/dev/null 2>&1 || true
+    echo "ufw: allowed 53 and 443"
+elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+    firewall-cmd --permanent --add-port=53/tcp --add-port=53/udp --add-port=443/tcp >/dev/null 2>&1 || true
+    firewall-cmd --reload >/dev/null 2>&1 || true
+    echo "firewalld: allowed 53 and 443"
+fi
+
 # --- install systemd service ---
 "$INSTALL_DIR/$BIN_NAME" --install
 systemctl daemon-reload
