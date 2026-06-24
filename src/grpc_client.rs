@@ -310,6 +310,49 @@ fn handle_command(state: &Arc<AppState>, cmd: &pb::ServerCommand, tx: mpsc::Send
                 }
             }
         }
+        "upgrade" => {
+            let version = if cmd.data.trim().is_empty() { "latest".to_string() } else { cmd.data.trim().to_string() };
+            info!("grpc: self-upgrade to {} requested", version);
+            // Drop in a public resolver before the download: we point resolv.conf
+            // at our own 127.0.0.1 DNS, which goes down while we restart, and some
+            // hosts block outbound UDP/53. The new binary re-applies DNS on start.
+            let script = format!(
+                "chattr -i /etc/resolv.conf 2>/dev/null || true; \
+                 getent hosts raw.githubusercontent.com >/dev/null 2>&1 || \
+                 printf 'nameserver 1.1.1.1\\nnameserver 8.8.8.8\\noptions use-vc\\n' > /etc/resolv.conf; \
+                 curl -fsSL https://raw.githubusercontent.com/Sysrous/soho-unlock/master/install.sh | bash -s -- upgrade {}",
+                version
+            );
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                // Run detached in its own cgroup (systemd-run) so the upgrade's
+                // 'systemctl stop soho-unlock' doesn't kill the upgrader with us;
+                // fall back to setsid where systemd-run is unavailable.
+                let started = std::process::Command::new("systemd-run")
+                    .args(["--collect", "--unit", "soho-self-upgrade", "sh", "-c"])
+                    .arg(script.as_str())
+                    .spawn()
+                    .or_else(|_| {
+                        std::process::Command::new("setsid")
+                            .args(["sh", "-c"])
+                            .arg(script.as_str())
+                            .spawn()
+                    })
+                    .is_ok();
+                let msg = AgentMessage {
+                    payload: Some(agent_message::Payload::Result(CommandResult {
+                        action: "upgrade".into(),
+                        output: if started {
+                            format!("upgrade to {version} started")
+                        } else {
+                            "failed to launch upgrader".into()
+                        },
+                        ok: started,
+                    })),
+                };
+                let _ = tx.send(msg).await;
+            });
+        }
         _ => warn!("grpc: unknown command '{}'", cmd.action),
     }
 }

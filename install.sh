@@ -8,6 +8,19 @@ CONFIG_FILE="$CONFIG_DIR/config.toml"
 BIN_NAME="soho-unlock"
 SERVICE_FILE="/etc/systemd/system/soho-unlock.service"
 
+# The box may point resolv.conf at 127.0.0.1 (our own DNS), which is down while we
+# restart, and some hosts block outbound UDP/53. If GitHub can't be resolved, drop
+# in a public TCP-capable resolver so the download works. The agent re-applies its
+# own DNS on the next start.
+ensure_dns() {
+    if getent hosts raw.githubusercontent.com >/dev/null 2>&1; then
+        return 0
+    fi
+    echo "Name resolution is down — setting temporary resolver 1.1.1.1 ..."
+    chattr -i /etc/resolv.conf 2>/dev/null || true
+    printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\noptions use-vc\n' > /etc/resolv.conf
+}
+
 # --- uninstall ---
 if [[ "${1:-}" == "uninstall" ]]; then
     echo "Uninstalling soho-unlock..."
@@ -30,6 +43,7 @@ if [[ "${1:-}" == "upgrade" ]]; then
         aarch64|arm64)  BINARY="soho-unlock-linux-arm64" ;;
         *)              echo "Unsupported architecture: $ARCH"; exit 1 ;;
     esac
+    ensure_dns
     if [[ "$VERSION" == "latest" ]]; then
         VERSION=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"//;s/".*//')
     fi
@@ -99,6 +113,7 @@ case "$ARCH" in
 esac
 
 # --- resolve version ---
+ensure_dns
 if [[ "$VERSION" == "latest" ]]; then
     echo "Fetching latest release..."
     VERSION=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"//;s/".*//')
