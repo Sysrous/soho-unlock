@@ -287,23 +287,27 @@ fn handle_command(state: &Arc<AppState>, cmd: &pb::ServerCommand, tx: mpsc::Send
             });
         }
         "set_dns" => {
-            let servers: Vec<&str> = cmd.data.split_whitespace().collect();
-            if servers.is_empty() {
-                warn!("grpc: set_dns with no servers");
+            if state.config.panel.node_type == "unlock" {
+                warn!("grpc: ignoring set_dns on unlock server");
             } else {
-                crate::sysdns::apply(&servers);
-                let data = cmd.data.clone();
-                let tx = tx.clone();
-                tokio::spawn(async move {
-                    let msg = AgentMessage {
-                        payload: Some(agent_message::Payload::Result(CommandResult {
-                            action: "set_dns".into(),
-                            output: format!("system DNS set to: {data}"),
-                            ok: true,
-                        })),
-                    };
-                    let _ = tx.send(msg).await;
-                });
+                let servers: Vec<&str> = cmd.data.split_whitespace().collect();
+                if servers.is_empty() {
+                    warn!("grpc: set_dns with no servers");
+                } else {
+                    crate::sysdns::apply(&servers);
+                    let data = cmd.data.clone();
+                    let tx = tx.clone();
+                    tokio::spawn(async move {
+                        let msg = AgentMessage {
+                            payload: Some(agent_message::Payload::Result(CommandResult {
+                                action: "set_dns".into(),
+                                output: format!("system DNS set to: {data}"),
+                                ok: true,
+                            })),
+                        };
+                        let _ = tx.send(msg).await;
+                    });
+                }
             }
         }
         _ => warn!("grpc: unknown command '{}'", cmd.action),
