@@ -11,7 +11,23 @@ const MAX_DNS_PACKET: usize = 512;
 
 pub async fn run_dns_server(state: Arc<AppState>) -> anyhow::Result<()> {
     let addr: SocketAddr = state.config.server.dns_listen.parse()?;
-    let sock = UdpSocket::bind(addr).await?;
+    // Bind with retry + a LOUD warning: if another resolver (dnsmasq / sniproxy /
+    // smartdns) already holds port 53, a silent bind failure means soho-unlock's
+    // DNS never serves and every unlock query falls through to the squatter. Keep
+    // retrying so we self-heal the moment the port is freed.
+    let sock = loop {
+        match UdpSocket::bind(addr).await {
+            Ok(s) => break s,
+            Err(e) => {
+                warn!(
+                    "DNS server cannot bind {addr}: {e}. Another resolver \
+                     (dnsmasq/sniproxy/smartdns) is probably holding port 53 — \
+                     stop it. Retrying in 10s..."
+                );
+                tokio::time::sleep(Duration::from_secs(10)).await;
+            }
+        }
+    };
     tracing::info!("DNS server listening on {}", addr);
 
     let sock = Arc::new(sock);

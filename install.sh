@@ -189,6 +189,18 @@ TOML
 
 echo "Config written to $CONFIG_FILE"
 
+# --- free ports 53/443 from legacy unlock stacks ---
+# soho-unlock replaces dnsmasq + sniproxy (+ smartdns). If any are still running
+# they hold :53/:443 and soho-unlock's DNS/SNI bind fails (silently), so unlock
+# never works. Stop, disable, and kill stragglers so soho-unlock can own the
+# ports. (For full package removal, run your dnsmasq_sniproxy uninstaller.)
+echo "Freeing ports 53/443 from legacy DNS/SNI services if present..."
+for svc in dnsmasq sniproxy smartdns; do
+    systemctl stop "$svc" 2>/dev/null && echo "  stopped $svc" || true
+    systemctl disable "$svc" 2>/dev/null || true
+    pkill -x "$svc" 2>/dev/null || true
+done
+
 # --- install systemd service ---
 "$INSTALL_DIR/$BIN_NAME" --install
 systemctl daemon-reload
