@@ -203,7 +203,7 @@ fn load_dns_forward_map(state: &Arc<state::AppState>) {
     if let Ok(text) = std::fs::read_to_string(&path) {
         let fwd_map = state::DnsForwardMap::from_dns_json(&text);
         if !fwd_map.is_empty() {
-            info!("dns forward map: {} server entries from {}", fwd_map.entry_count(), path.display());
+            info!("dns forward map: {} domains from {}", fwd_map.entry_count(), path.display());
             state.dns_forward_map.store(Arc::new(fwd_map));
         }
     }

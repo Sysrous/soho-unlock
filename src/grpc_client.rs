@@ -239,7 +239,7 @@ fn apply_config_push(state: &Arc<AppState>, cfg: &pb::ConfigPush) {
         if state.config.panel.node_type != "unlock" {
             let fwd_map = crate::state::DnsForwardMap::from_dns_json(&cfg.dns_json);
             if !fwd_map.is_empty() {
-                info!("grpc: dns forward map loaded ({} server entries)", fwd_map.entry_count());
+                info!("grpc: dns forward map loaded ({} domains)", fwd_map.entry_count());
                 state.dns_forward_map.store(Arc::new(fwd_map));
             }
         }

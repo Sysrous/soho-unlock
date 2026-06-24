@@ -1,6 +1,6 @@
 use arc_swap::ArcSwap;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -22,21 +22,18 @@ pub struct AppState {
 }
 
 pub struct DnsForwardMap {
-    entries: Vec<ForwardEntry>,
-}
-
-struct ForwardEntry {
-    domains: Vec<String>,
-    ip: Ipv4Addr,
+    // domain (lowercased, no trailing dot) -> unlock server IP. A key matches the
+    // query name exactly or as a parent suffix, resolved by walking parent labels.
+    map: HashMap<String, Ipv4Addr>,
 }
 
 impl Default for DnsForwardMap {
-    fn default() -> Self { Self { entries: Vec::new() } }
+    fn default() -> Self { Self { map: HashMap::new() } }
 }
 
 impl DnsForwardMap {
     pub fn from_dns_json(raw: &str) -> Self {
-        let mut entries = Vec::new();
+        let mut map = HashMap::new();
         if let Ok(obj) = serde_json::from_str::<serde_json::Value>(raw) {
             if let Some(servers) = obj.get("servers").and_then(|v| v.as_array()) {
                 for srv in servers {
@@ -52,34 +49,43 @@ impl DnsForwardMap {
                         Some(d) if !d.is_empty() => d,
                         _ => continue,
                     };
-                    let domain_list: Vec<String> = domains
-                        .iter()
-                        .filter_map(|v| v.as_str())
-                        .filter(|s| !s.starts_with("geosite:"))
-                        .map(|s| s.to_lowercase())
-                        .collect();
-                    if domain_list.is_empty() { continue; }
-                    entries.push(ForwardEntry { domains: domain_list, ip });
+                    for v in domains {
+                        if let Some(s) = v.as_str() {
+                            if s.starts_with("geosite:") {
+                                continue;
+                            }
+                            let key = s.trim().trim_end_matches('.').to_lowercase();
+                            if !key.is_empty() {
+                                map.entry(key).or_insert(ip);
+                            }
+                        }
+                    }
                 }
             }
         }
-        Self { entries }
+        Self { map }
     }
 
     pub fn lookup(&self, domain: &str) -> Option<Ipv4Addr> {
-        let domain = domain.to_lowercase();
-        for entry in &self.entries {
-            for d in &entry.domains {
-                if domain == *d || domain.ends_with(&format!(".{}", d)) {
-                    return Some(entry.ip);
-                }
+        if self.map.is_empty() {
+            return None;
+        }
+        let domain = domain.trim_end_matches('.').to_lowercase();
+        // Exact match, then each parent suffix (a.b.c -> b.c -> c).
+        let mut cur: &str = &domain;
+        loop {
+            if let Some(ip) = self.map.get(cur) {
+                return Some(*ip);
+            }
+            match cur.find('.') {
+                Some(i) => cur = &cur[i + 1..],
+                None => return None,
             }
         }
-        None
     }
 
-    pub fn is_empty(&self) -> bool { self.entries.is_empty() }
-    pub fn entry_count(&self) -> usize { self.entries.len() }
+    pub fn is_empty(&self) -> bool { self.map.is_empty() }
+    pub fn entry_count(&self) -> usize { self.map.len() }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
