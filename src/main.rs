@@ -193,6 +193,10 @@ fn load_all_rules(state: &Arc<state::AppState>) {
 }
 
 fn load_dns_forward_map(state: &Arc<state::AppState>) {
+    // Only transit nodes use the forward map; unlock servers return their own IP
+    if state.config.panel.node_type == "unlock" {
+        return;
+    }
     let path = state.config.dns_json_path();
     if let Ok(text) = std::fs::read_to_string(&path) {
         let fwd_map = state::DnsForwardMap::from_dns_json(&text);

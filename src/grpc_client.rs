@@ -235,10 +235,13 @@ fn apply_config_push(state: &Arc<AppState>, cfg: &pb::ConfigPush) {
             info!("grpc: rules updated ({count} entries)");
         }
 
-        let fwd_map = crate::state::DnsForwardMap::from_dns_json(&cfg.dns_json);
-        if !fwd_map.is_empty() {
-            info!("grpc: dns forward map loaded ({} server entries)", fwd_map.entry_count());
-            state.dns_forward_map.store(Arc::new(fwd_map));
+        // Only transit nodes use the forward map; unlock servers return their own IP
+        if state.config.panel.node_type != "unlock" {
+            let fwd_map = crate::state::DnsForwardMap::from_dns_json(&cfg.dns_json);
+            if !fwd_map.is_empty() {
+                info!("grpc: dns forward map loaded ({} server entries)", fwd_map.entry_count());
+                state.dns_forward_map.store(Arc::new(fwd_map));
+            }
         }
 
         let dir = &state.config.data.dns_json_dir;
