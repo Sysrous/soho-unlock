@@ -234,6 +234,13 @@ fn apply_config_push(state: &Arc<AppState>, cfg: &pb::ConfigPush) {
             state.rules.store(Arc::new(set));
             info!("grpc: rules updated ({count} entries)");
         }
+
+        let fwd_map = crate::state::DnsForwardMap::from_dns_json(&cfg.dns_json);
+        if !fwd_map.is_empty() {
+            info!("grpc: dns forward map loaded ({} server entries)", fwd_map.entry_count());
+            state.dns_forward_map.store(Arc::new(fwd_map));
+        }
+
         let dir = &state.config.data.dns_json_dir;
         let _ = std::fs::create_dir_all(dir);
         let path = dir.join("dns.json");
@@ -243,7 +250,6 @@ fn apply_config_push(state: &Arc<AppState>, cfg: &pb::ConfigPush) {
             info!("grpc: wrote {}", path.display());
         }
 
-        // Point system DNS to our own DNS listener so all queries go through soho-unlock
         let local_ip = state.config.local_dns_ip();
         crate::sysdns::apply(&[&local_ip]);
     }

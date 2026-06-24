@@ -47,15 +47,23 @@ async fn handle_query(state: &AppState, packet: &[u8]) -> Option<Vec<u8>> {
         let rules = state.rules.load();
         if rules.match_domain(&query.qname) {
             state.stats.dns_matched.fetch_add(1, Ordering::Relaxed);
-            debug!("dns match: {} -> unlock", query.qname);
 
+            // Forward to per-domain unlock server DNS (from dns.json mapping)
+            let fwd_map = state.dns_forward_map.load();
+            if let Some(upstream) = fwd_map.lookup(&query.qname) {
+                debug!("dns match: {} -> forward to {}", query.qname, upstream);
+                let timeout = Duration::from_millis(state.config.upstream.timeout_ms);
+                return forward_udp(packet, upstream, timeout).await.ok();
+            }
+
+            // Fallback: return our own IP (for unlock server nodes)
+            debug!("dns match: {} -> unlock (self)", query.qname);
             if query.qtype == QTYPE_A {
                 let target = state.unlock_ip.load();
                 if let Some(ip) = target.ipv4 {
                     return Some(build_a_response(packet, &query, ip, state.config.unlock.ttl));
                 }
             }
-            // AAAA for matched domains: return empty (no AAAA) to force IPv4
             return Some(build_empty_response(packet, &query));
         }
     }

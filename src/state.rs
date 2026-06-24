@@ -1,7 +1,7 @@
 use arc_swap::ArcSwap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -17,7 +17,68 @@ pub struct AppState {
     pub services: ArcSwap<ServiceList>,
     pub unlock_ip: ArcSwap<ResolvedTarget>,
     pub ip_detect_urls: ArcSwap<Vec<String>>,
+    pub dns_forward_map: ArcSwap<DnsForwardMap>,
     pub stats: Stats,
+}
+
+pub struct DnsForwardMap {
+    entries: Vec<ForwardEntry>,
+}
+
+struct ForwardEntry {
+    domains: Vec<String>,
+    addr: SocketAddr,
+}
+
+impl Default for DnsForwardMap {
+    fn default() -> Self { Self { entries: Vec::new() } }
+}
+
+impl DnsForwardMap {
+    pub fn from_dns_json(raw: &str) -> Self {
+        let mut entries = Vec::new();
+        if let Ok(obj) = serde_json::from_str::<serde_json::Value>(raw) {
+            if let Some(servers) = obj.get("servers").and_then(|v| v.as_array()) {
+                for srv in servers {
+                    let addr_str = match srv.get("address").and_then(|v| v.as_str()) {
+                        Some(a) => a,
+                        None => continue,
+                    };
+                    let port = srv.get("port").and_then(|v| v.as_u64()).unwrap_or(53) as u16;
+                    let domains = match srv.get("domains").and_then(|v| v.as_array()) {
+                        Some(d) if !d.is_empty() => d,
+                        _ => continue,
+                    };
+                    let domain_list: Vec<String> = domains
+                        .iter()
+                        .filter_map(|v| v.as_str())
+                        .filter(|s| !s.starts_with("geosite:"))
+                        .map(|s| s.to_lowercase())
+                        .collect();
+                    if domain_list.is_empty() { continue; }
+                    if let Ok(addr) = format!("{}:{}", addr_str, port).parse::<SocketAddr>() {
+                        entries.push(ForwardEntry { domains: domain_list, addr });
+                    }
+                }
+            }
+        }
+        Self { entries }
+    }
+
+    pub fn lookup(&self, domain: &str) -> Option<SocketAddr> {
+        let domain = domain.to_lowercase();
+        for entry in &self.entries {
+            for d in &entry.domains {
+                if domain == *d || domain.ends_with(&format!(".{}", d)) {
+                    return Some(entry.addr);
+                }
+            }
+        }
+        None
+    }
+
+    pub fn is_empty(&self) -> bool { self.entries.is_empty() }
+    pub fn entry_count(&self) -> usize { self.entries.len() }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -227,6 +288,7 @@ impl AppState {
             services: ArcSwap::from_pointee(services),
             unlock_ip: ArcSwap::from_pointee(target),
             ip_detect_urls: ArcSwap::from_pointee(Vec::new()),
+            dns_forward_map: ArcSwap::from_pointee(DnsForwardMap::default()),
             stats: Stats::new(),
         })
     }

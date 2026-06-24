@@ -49,8 +49,9 @@ async fn main() -> anyhow::Result<()> {
 
     let state = state::AppState::new(cfg);
 
-    // Load rules from custom_rules.json + rules/ directory
+    // Load rules + dns forward map from persisted dns.json + rules/ directory
     load_all_rules(&state);
+    load_dns_forward_map(&state);
 
     // Fetch IP detect URLs from panel, then resolve unlock target
     let ip_urls = fetch_ip_detect_urls(&state).await;
@@ -189,6 +190,17 @@ fn load_all_rules(state: &Arc<state::AppState>) {
     let mut set = rules::RuleSet::from_entries(all_entries);
     set.rebuild();
     state.rules.store(Arc::new(set));
+}
+
+fn load_dns_forward_map(state: &Arc<state::AppState>) {
+    let path = state.config.dns_json_path();
+    if let Ok(text) = std::fs::read_to_string(&path) {
+        let fwd_map = state::DnsForwardMap::from_dns_json(&text);
+        if !fwd_map.is_empty() {
+            info!("dns forward map: {} server entries from {}", fwd_map.entry_count(), path.display());
+            state.dns_forward_map.store(Arc::new(fwd_map));
+        }
+    }
 }
 
 async fn fetch_ip_detect_urls(state: &Arc<state::AppState>) -> Vec<String> {
