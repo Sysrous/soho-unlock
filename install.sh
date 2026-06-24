@@ -38,12 +38,18 @@ if [[ "${1:-}" == "upgrade" ]]; then
     TMP=$(mktemp)
     curl -fSL -o "$TMP" "https://github.com/$REPO/releases/download/$VERSION/$BINARY"
     chmod +x "$TMP"
-    systemctl stop soho-unlock 2>/dev/null || true
+    systemctl stop soho-unlock 2>/dev/null || rc-service soho-unlock stop 2>/dev/null || true
     mv "$TMP" "$INSTALL_DIR/$BIN_NAME"
     # Also update ut
     UT_ARCH="amd64"; [[ "$ARCH" == aarch64 || "$ARCH" == arm64 ]] && UT_ARCH="arm64"
     curl -fSL -o "$INSTALL_DIR/ut" "https://github.com/oneclickvirt/UnlockTests/releases/latest/download/ut-linux-${UT_ARCH}" && chmod +x "$INSTALL_DIR/ut" && echo "ut updated" || echo "ut update failed (non-fatal)"
-    systemctl start soho-unlock
+    # A file swap alone leaves the old process resident in memory (still holding
+    # :53), so the new binary never actually takes over. Kill any straggler, then
+    # start fresh so the upgrade really applies.
+    pkill -x soho-unlock 2>/dev/null || true
+    sleep 1
+    systemctl start soho-unlock 2>/dev/null || rc-service soho-unlock start 2>/dev/null || true
+    sleep 1
     NEW_VER=$("$INSTALL_DIR/$BIN_NAME" --version 2>/dev/null || echo "$VERSION")
     echo "Upgraded: $OLD_VER -> $NEW_VER (config preserved)"
     exit 0
