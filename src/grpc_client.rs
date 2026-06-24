@@ -253,8 +253,10 @@ fn apply_config_push(state: &Arc<AppState>, cfg: &pb::ConfigPush) {
             info!("grpc: wrote {}", path.display());
         }
 
-        let local_ip = state.config.local_dns_ip();
-        crate::sysdns::apply(&[&local_ip]);
+        if state.config.panel.node_type != "unlock" {
+            let local_ip = state.config.local_dns_ip();
+            crate::sysdns::apply(&[&local_ip]);
+        }
     }
 }
 

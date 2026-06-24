@@ -91,9 +91,11 @@ async fn main() -> anyhow::Result<()> {
     let http_handle = tokio::spawn(async move { sni::run_http_proxy(s4).await });
     let grpc_handle = tokio::spawn(async move { grpc_client::run_grpc_client(s7).await });
 
-    // Point system DNS to our own DNS listener (after it's spawned)
-    let local_ip = state.config.local_dns_ip();
-    sysdns::apply(&[&local_ip]);
+    // Point system DNS to our own DNS listener (transit nodes only)
+    if state.config.panel.node_type != "unlock" {
+        let local_ip = state.config.local_dns_ip();
+        sysdns::apply(&[&local_ip]);
+    }
 
     // Periodic target re-resolve (for domain targets / IP refresh)
     let s5 = state.clone();
