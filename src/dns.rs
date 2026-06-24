@@ -46,29 +46,34 @@ async fn handle_query(state: &AppState, packet: &[u8]) -> Option<Vec<u8>> {
     if query.qtype == QTYPE_A || query.qtype == QTYPE_AAAA {
         let rules = state.rules.load();
         if rules.match_domain(&query.qname) {
-            state.stats.dns_matched.fetch_add(1, Ordering::Relaxed);
-
-            // Return unlock server IP directly from dns.json mapping
             let fwd_map = state.dns_forward_map.load();
-            if query.qtype == QTYPE_A {
-                if let Some(unlock_ip) = fwd_map.lookup(&query.qname) {
+
+            // Mapped domain → answer with its unlock server IP (A), and suppress
+            // AAAA so the client takes the unlocked v4 path instead of leaking v6.
+            if let Some(unlock_ip) = fwd_map.lookup(&query.qname) {
+                state.stats.dns_matched.fetch_add(1, Ordering::Relaxed);
+                if query.qtype == QTYPE_A {
                     debug!("dns match: {} -> {}", query.qname, unlock_ip);
                     return Some(build_a_response(packet, &query, unlock_ip, state.config.unlock.ttl));
                 }
-            }
-            if !fwd_map.is_empty() && query.qtype == QTYPE_AAAA {
                 return Some(build_empty_response(packet, &query));
             }
 
-            // Fallback: return our own IP (for unlock server nodes running locally)
-            debug!("dns match: {} -> unlock (self)", query.qname);
-            if query.qtype == QTYPE_A {
-                let target = state.unlock_ip.load();
-                if let Some(ip) = target.ipv4 {
-                    return Some(build_a_response(packet, &query, ip, state.config.unlock.ttl));
+            // Matched but not in the forward map. On an unlock server this means
+            // "terminate the SNI relay here" → return our own IP. A transit node
+            // must NEVER return its own IP: the client would hairpin back to the
+            // transit box, and clouds usually don't hairpin → the connection just
+            // fails. So on transit nodes fall through and resolve normally.
+            if state.config.panel.node_type == "unlock" {
+                state.stats.dns_matched.fetch_add(1, Ordering::Relaxed);
+                debug!("dns match: {} -> unlock (self)", query.qname);
+                if query.qtype == QTYPE_A {
+                    if let Some(ip) = state.unlock_ip.load().ipv4 {
+                        return Some(build_a_response(packet, &query, ip, state.config.unlock.ttl));
+                    }
                 }
+                return Some(build_empty_response(packet, &query));
             }
-            return Some(build_empty_response(packet, &query));
         }
     }
 
