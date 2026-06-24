@@ -277,12 +277,13 @@ fn handle_command(state: &Arc<AppState>, cmd: &pb::ServerCommand, tx: mpsc::Send
                 warn!("grpc: set_dns with no servers");
             } else {
                 crate::sysdns::apply(&servers);
+                let data = cmd.data.clone();
                 let tx = tx.clone();
                 tokio::spawn(async move {
                     let msg = AgentMessage {
                         payload: Some(agent_message::Payload::Result(CommandResult {
                             action: "set_dns".into(),
-                            output: format!("system DNS set to: {}", cmd.data),
+                            output: format!("system DNS set to: {data}"),
                             ok: true,
                         })),
                     };

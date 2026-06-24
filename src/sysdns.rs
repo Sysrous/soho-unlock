@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 use tracing::{info, warn};
 
@@ -44,6 +44,7 @@ pub fn apply(dns_servers: &[&str]) {
     }
 }
 
+#[allow(dead_code)]
 pub fn cleanup() {
     let mgr = detect();
     match mgr {
