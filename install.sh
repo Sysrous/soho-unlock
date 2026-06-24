@@ -147,6 +147,13 @@ if [[ -z "$UNLOCK_TARGET" ]]; then
     UNLOCK_TARGET="0.0.0.0"
 fi
 
+# Map install --type to config node_type
+case "$NODE_TYPE" in
+    dns|unlock) CFG_NODE_TYPE="unlock" ;;
+    transit)    CFG_NODE_TYPE="transit" ;;
+    *)          CFG_NODE_TYPE="$NODE_TYPE" ;;
+esac
+
 cat > "$CONFIG_FILE" <<TOML
 [server]
 dns_listen = "0.0.0.0:53"
@@ -170,6 +177,7 @@ url = "$PANEL_URL"
 grpc_addr = "$GRPC_ADDR"
 node_id = $NODE_ID
 token = "$TOKEN"
+node_type = "$CFG_NODE_TYPE"
 heartbeat_secs = 30
 TOML
 

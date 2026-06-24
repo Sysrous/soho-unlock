@@ -47,7 +47,7 @@ impl Default for PanelConfig {
     }
 }
 
-fn default_node_type() -> String { "unlock".into() }
+fn default_node_type() -> String { "transit".into() }
 
 fn default_panel_interval() -> u64 { 30 }
 
