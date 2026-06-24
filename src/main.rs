@@ -70,9 +70,17 @@ async fn main() -> anyhow::Result<()> {
         None
     };
 
-    // Set system DNS to our upstream servers so the host resolves through us
-    let upstream: Vec<&str> = state.config.upstream.dns.iter().map(|s| s.as_str()).collect();
-    sysdns::apply(&upstream);
+    // Set system DNS to unlock server IPs from persisted dns.json
+    {
+        let dns_json_path = state.config.dns_json_path();
+        if let Ok(raw) = std::fs::read_to_string(&dns_json_path) {
+            let ips = grpc_client::extract_unlock_ips(&raw);
+            if !ips.is_empty() {
+                let refs: Vec<&str> = ips.iter().map(|s| s.as_str()).collect();
+                sysdns::apply(&refs);
+            }
+        }
+    }
 
     info!(
         "unlock target: {} -> {:?}",

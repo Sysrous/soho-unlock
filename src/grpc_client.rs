@@ -242,6 +242,13 @@ fn apply_config_push(state: &Arc<AppState>, cfg: &pb::ConfigPush) {
         } else {
             info!("grpc: wrote {}", path.display());
         }
+
+        // Set system DNS to unlock server IPs extracted from dns.json
+        let unlock_ips = extract_unlock_ips(&cfg.dns_json);
+        if !unlock_ips.is_empty() {
+            let refs: Vec<&str> = unlock_ips.iter().map(|s| s.as_str()).collect();
+            crate::sysdns::apply(&refs);
+        }
     }
 }
 
@@ -397,4 +404,23 @@ pub fn parse_dns_json_to_rules(raw: &str) -> Vec<crate::rules::RuleEntry> {
         }
     }
     Vec::new()
+}
+
+pub fn extract_unlock_ips(raw: &str) -> Vec<String> {
+    let mut ips = Vec::new();
+    if let Ok(obj) = serde_json::from_str::<serde_json::Value>(raw) {
+        if let Some(servers) = obj.get("servers").and_then(|v| v.as_array()) {
+            for srv in servers {
+                // Only server objects with domains (not plain upstream strings like "1.1.1.1")
+                if let Some(addr) = srv.get("address").and_then(|v| v.as_str()) {
+                    if srv.get("domains").and_then(|v| v.as_array()).map(|a| !a.is_empty()).unwrap_or(false) {
+                        if !ips.contains(&addr.to_string()) {
+                            ips.push(addr.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    ips
 }
