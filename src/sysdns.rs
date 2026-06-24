@@ -200,30 +200,10 @@ fn cleanup_raw() {
 fn write_resolv_conf(servers: &[&str]) -> bool {
     let path = Path::new("/etc/resolv.conf");
 
-    // Read existing content, preserve non-soho lines
-    let existing = std::fs::read_to_string(path).unwrap_or_default();
-    let mut lines: Vec<String> = existing
-        .lines()
-        .filter(|l| !l.contains("soho-unlock") && !l.trim().is_empty())
-        .filter(|l| {
-            // Remove existing nameserver lines that we'll replace
-            if l.starts_with("nameserver ") {
-                let ns = l.trim_start_matches("nameserver ").trim();
-                // Keep nameservers that aren't our servers (user's original)
-                // But if we're managing DNS, we should be authoritative
-                return !servers.contains(&ns);
-            }
-            true
-        })
-        .map(String::from)
-        .collect();
-
-    // Prepend our nameservers at the top (highest priority)
     let mut result = vec![SOHO_TAG.to_string()];
     for s in servers {
         result.push(format!("nameserver {s}"));
     }
-    result.append(&mut lines);
 
     let new_content = result.join("\n") + "\n";
     write_if_changed(path, &new_content)
