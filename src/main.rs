@@ -80,12 +80,14 @@ async fn main() -> anyhow::Result<()> {
     info!("sources: {}", state.sources.load().entries.len());
 
     let s1 = state.clone();
+    let s1t = state.clone();
     let s2 = state.clone();
     let s3 = state.clone();
     let s4 = state.clone();
     let s7 = state.clone();
 
     let dns_handle = tokio::spawn(async move { dns::run_dns_server(s1).await });
+    let dns_tcp_handle = tokio::spawn(async move { dns::run_dns_server_tcp(s1t).await });
     let sni_handle = tokio::spawn(async move { sni::run_sni_proxy(s2).await });
     let panel_handle = tokio::spawn(async move { panel::run_panel(s3).await });
     let http_handle = tokio::spawn(async move { sni::run_http_proxy(s4).await });
@@ -133,6 +135,7 @@ async fn main() -> anyhow::Result<()> {
     // Don't cleanup sysdns on stop — DNS settings should persist across restarts
 
     drop(dns_handle);
+    drop(dns_tcp_handle);
     drop(sni_handle);
     drop(panel_handle);
     drop(http_handle);

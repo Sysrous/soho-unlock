@@ -2,7 +2,8 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::net::UdpSocket;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tracing::{debug, warn};
 
 use crate::state::AppState;
@@ -56,6 +57,61 @@ pub async fn run_dns_server(state: Arc<AppState>) -> anyhow::Result<()> {
     }
 }
 
+/// DNS over TCP on the same address. Needed because some networks block UDP/53,
+/// and `options use-vc` in resolv.conf makes the stub resolver query us over TCP.
+pub async fn run_dns_server_tcp(state: Arc<AppState>) -> anyhow::Result<()> {
+    let addr: SocketAddr = state.config.server.dns_listen.parse()?;
+    let listener = loop {
+        match TcpListener::bind(addr).await {
+            Ok(l) => break l,
+            Err(e) => {
+                warn!(
+                    "DNS-over-TCP cannot bind {addr}: {e}. Another resolver \
+                     (dnsmasq/sniproxy/smartdns) is probably holding port 53 — \
+                     stop it. Retrying in 10s..."
+                );
+                tokio::time::sleep(Duration::from_secs(10)).await;
+            }
+        }
+    };
+    tracing::info!("DNS server (TCP) listening on {}", addr);
+
+    loop {
+        let (mut stream, src) = match listener.accept().await {
+            Ok(v) => v,
+            Err(e) => { warn!("dns-tcp accept error: {e}"); continue; }
+        };
+        if !state.is_source_allowed(&src.ip()) {
+            state.stats.dns_blocked.fetch_add(1, Ordering::Relaxed);
+            continue;
+        }
+        let st = state.clone();
+        tokio::spawn(async move {
+            let _ = tokio::time::timeout(Duration::from_secs(10), handle_tcp_query(&st, &mut stream)).await;
+        });
+    }
+}
+
+/// One TCP DNS exchange: 2-byte big-endian length prefix + DNS message, both ways.
+async fn handle_tcp_query(state: &AppState, stream: &mut TcpStream) -> anyhow::Result<()> {
+    let mut len_buf = [0u8; 2];
+    stream.read_exact(&mut len_buf).await?;
+    let len = u16::from_be_bytes(len_buf) as usize;
+    if len == 0 || len > 4096 {
+        return Ok(());
+    }
+    let mut msg = vec![0u8; len];
+    stream.read_exact(&mut msg).await?;
+    state.stats.dns_queries.fetch_add(1, Ordering::Relaxed);
+
+    if let Some(resp) = handle_query(state, &msg).await {
+        let rlen = (resp.len() as u16).to_be_bytes();
+        stream.write_all(&rlen).await?;
+        stream.write_all(&resp).await?;
+    }
+    Ok(())
+}
+
 async fn handle_query(state: &AppState, packet: &[u8]) -> Option<Vec<u8>> {
     let query = parse_query(packet)?;
 
@@ -107,10 +163,18 @@ async fn forward_to_upstream(state: &AppState, packet: &[u8]) -> Option<Vec<u8>>
         };
         match forward_udp(packet, addr, timeout).await {
             Ok(resp) => return Some(resp),
-            Err(e) => { debug!("upstream {addr} failed: {e}"); continue; }
+            Err(e) => {
+                // Some networks (notably some HK hosts) block outbound UDP/53.
+                // Fall back to TCP before giving up on this upstream.
+                debug!("upstream UDP {addr} failed: {e}, trying TCP");
+                match forward_tcp(packet, addr, timeout).await {
+                    Ok(resp) => return Some(resp),
+                    Err(e2) => { debug!("upstream TCP {addr} failed: {e2}"); continue; }
+                }
+            }
         }
     }
-    warn!("all upstream DNS servers failed");
+    warn!("all upstream DNS servers failed (udp+tcp)");
     None
 }
 
@@ -120,6 +184,22 @@ async fn forward_udp(packet: &[u8], upstream: SocketAddr, timeout: Duration) -> 
     let mut buf = [0u8; 4096];
     let len = tokio::time::timeout(timeout, sock.recv(&mut buf)).await??;
     Ok(buf[..len].to_vec())
+}
+
+async fn forward_tcp(packet: &[u8], upstream: SocketAddr, timeout: Duration) -> anyhow::Result<Vec<u8>> {
+    let fut = async {
+        let mut stream = TcpStream::connect(upstream).await?;
+        let len = (packet.len() as u16).to_be_bytes();
+        stream.write_all(&len).await?;
+        stream.write_all(packet).await?;
+        let mut lbuf = [0u8; 2];
+        stream.read_exact(&mut lbuf).await?;
+        let rlen = u16::from_be_bytes(lbuf) as usize;
+        let mut buf = vec![0u8; rlen];
+        stream.read_exact(&mut buf).await?;
+        Ok::<Vec<u8>, anyhow::Error>(buf)
+    };
+    tokio::time::timeout(timeout, fut).await?
 }
 
 // --- DNS packet constants ---

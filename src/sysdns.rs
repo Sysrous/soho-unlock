@@ -204,6 +204,9 @@ fn write_resolv_conf(servers: &[&str]) -> bool {
     for s in servers {
         result.push(format!("nameserver {s}"));
     }
+    // Force the stub resolver to query us over TCP. Some hosts (e.g. certain HK
+    // VPS) can't do UDP/53 reliably; our DNS server listens on TCP too.
+    result.push("options use-vc".to_string());
 
     let new_content = result.join("\n") + "\n";
     write_if_changed(path, &new_content)
