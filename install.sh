@@ -195,7 +195,7 @@ echo "Config written to $CONFIG_FILE"
 # never works. Stop, disable, and kill stragglers so soho-unlock can own the
 # ports. (For full package removal, run your dnsmasq_sniproxy uninstaller.)
 echo "Freeing ports 53/443 from legacy DNS/SNI services if present..."
-for svc in dnsmasq sniproxy smartdns; do
+for svc in dnsmasq sniproxy smartdns mosdns; do
     systemctl stop "$svc" 2>/dev/null && echo "  stopped $svc" || true
     systemctl disable "$svc" 2>/dev/null || true
     pkill -x "$svc" 2>/dev/null || true
