@@ -16,7 +16,7 @@ use std::sync::Arc;
 use tracing::info;
 
 #[derive(Parser)]
-#[command(name = "soho-unlock", about = "DNS unlock agent with SNI proxy")]
+#[command(name = "soho-unlock", version, about = "DNS unlock agent with SNI proxy")]
 struct Cli {
     #[arg(short, long, default_value = "/etc/soho-unlock/config.toml")]
     config: PathBuf,

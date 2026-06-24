@@ -24,6 +24,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Sync Cargo version to tag
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          sed -i "s/^version = \".*\"/version = \"$VER\"/" Cargo.toml
+          echo "Building soho-unlock $VER"
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
