@@ -8,6 +8,7 @@ mod rules;
 mod service;
 mod sni;
 mod state;
+mod sysdns;
 use clap::Parser;
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
@@ -69,6 +70,10 @@ async fn main() -> anyhow::Result<()> {
         None
     };
 
+    // Set system DNS to our upstream servers so the host resolves through us
+    let upstream: Vec<&str> = state.config.upstream.dns.iter().map(|s| s.as_str()).collect();
+    sysdns::apply(&upstream);
+
     info!(
         "unlock target: {} -> {:?}",
         state.config.unlock.target,
@@ -122,6 +127,7 @@ async fn main() -> anyhow::Result<()> {
     if let Some(backend) = fw_backend {
         firewall::cleanup(backend);
     }
+    // Don't cleanup sysdns on stop — DNS settings should persist across restarts
 
     drop(dns_handle);
     drop(sni_handle);
