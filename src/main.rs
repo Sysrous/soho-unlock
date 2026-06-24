@@ -70,18 +70,6 @@ async fn main() -> anyhow::Result<()> {
         None
     };
 
-    // Set system DNS to unlock server IPs from persisted dns.json
-    {
-        let dns_json_path = state.config.dns_json_path();
-        if let Ok(raw) = std::fs::read_to_string(&dns_json_path) {
-            let ips = grpc_client::extract_unlock_ips(&raw);
-            if !ips.is_empty() {
-                let refs: Vec<&str> = ips.iter().map(|s| s.as_str()).collect();
-                sysdns::apply(&refs);
-            }
-        }
-    }
-
     info!(
         "unlock target: {} -> {:?}",
         state.config.unlock.target,
@@ -101,6 +89,10 @@ async fn main() -> anyhow::Result<()> {
     let panel_handle = tokio::spawn(async move { panel::run_panel(s3).await });
     let http_handle = tokio::spawn(async move { sni::run_http_proxy(s4).await });
     let grpc_handle = tokio::spawn(async move { grpc_client::run_grpc_client(s7).await });
+
+    // Point system DNS to our own DNS listener (after it's spawned)
+    let local_ip = state.config.local_dns_ip();
+    sysdns::apply(&[&local_ip]);
 
     // Periodic target re-resolve (for domain targets / IP refresh)
     let s5 = state.clone();

@@ -243,12 +243,9 @@ fn apply_config_push(state: &Arc<AppState>, cfg: &pb::ConfigPush) {
             info!("grpc: wrote {}", path.display());
         }
 
-        // Set system DNS to unlock server IPs extracted from dns.json
-        let unlock_ips = extract_unlock_ips(&cfg.dns_json);
-        if !unlock_ips.is_empty() {
-            let refs: Vec<&str> = unlock_ips.iter().map(|s| s.as_str()).collect();
-            crate::sysdns::apply(&refs);
-        }
+        // Point system DNS to our own DNS listener so all queries go through soho-unlock
+        let local_ip = state.config.local_dns_ip();
+        crate::sysdns::apply(&[&local_ip]);
     }
 }
 
@@ -406,6 +403,7 @@ pub fn parse_dns_json_to_rules(raw: &str) -> Vec<crate::rules::RuleEntry> {
     Vec::new()
 }
 
+#[allow(dead_code)]
 pub fn extract_unlock_ips(raw: &str) -> Vec<String> {
     let mut ips = Vec::new();
     if let Ok(obj) = serde_json::from_str::<serde_json::Value>(raw) {

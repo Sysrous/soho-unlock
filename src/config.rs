@@ -134,6 +134,17 @@ impl Config {
     pub fn dns_json_path(&self) -> PathBuf {
         self.data.dns_json_dir.join("dns.json")
     }
+
+    pub fn local_dns_ip(&self) -> String {
+        let addr = &self.server.dns_listen;
+        if let Some(colon) = addr.rfind(':') {
+            let host = &addr[..colon];
+            if !host.is_empty() && host != "0.0.0.0" && host != "::" && host != "[::]" {
+                return host.trim_matches('[').trim_matches(']').to_string();
+            }
+        }
+        "127.0.0.1".to_string()
+    }
 }
 
 impl Default for ServerConfig {
