@@ -75,12 +75,13 @@ GRPC_ADDR=""
 NODE_ID=""
 TOKEN=""
 NODE_TYPE="dns"
+DEPLOY_MODE="dns53"   # dns53 (自研本地DNS) | kimir | xrayr；后两者 agent 只当下发代理
 VERSION="latest"
 UNLOCK_TARGET=""
 
 usage() {
     echo "Usage:"
-    echo "  Install:   bash <(curl -sL URL) --panel URL --node-id N --token T [--grpc URL] [--type dns|transit] [--target IP] [--version vX.Y.Z]"
+    echo "  Install:   bash <(curl -sL URL) --panel URL --node-id N --token T [--grpc URL] [--type dns|transit] [--deploy-mode dns53|kimir|xrayr] [--target IP] [--version vX.Y.Z]"
     echo "  Upgrade:   bash <(curl -sL URL) upgrade [vX.Y.Z]"
     echo "  Uninstall: bash <(curl -sL URL) uninstall"
     exit 1
@@ -92,7 +93,8 @@ while [[ $# -gt 0 ]]; do
         --grpc)     GRPC_ADDR="$2"; shift 2 ;;
         --node-id)  NODE_ID="$2"; shift 2 ;;
         --token)    TOKEN="$2"; shift 2 ;;
-        --type)     NODE_TYPE="$2"; shift 2 ;;
+        --type)        NODE_TYPE="$2"; shift 2 ;;
+        --deploy-mode) DEPLOY_MODE="$2"; shift 2 ;;
         --target)   UNLOCK_TARGET="$2"; shift 2 ;;
         --version)  VERSION="$2"; shift 2 ;;
         *)          echo "Unknown option: $1"; usage ;;
@@ -199,6 +201,7 @@ grpc_addr = "$GRPC_ADDR"
 node_id = $NODE_ID
 token = "$TOKEN"
 node_type = "$CFG_NODE_TYPE"
+deploy_mode = "$DEPLOY_MODE"
 heartbeat_secs = 30
 TOML
 
@@ -239,6 +242,7 @@ echo ""
 echo "=== soho-unlock installed ==="
 echo "Binary:  $INSTALL_DIR/$BIN_NAME"
 echo "Config:  $CONFIG_FILE"
+echo "Type:    $CFG_NODE_TYPE / deploy_mode=$DEPLOY_MODE"
 echo "Service: systemctl status soho-unlock"
 echo ""
 echo "Edit $CONFIG_FILE to set [unlock] target and [firewall] if needed, then:"

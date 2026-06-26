@@ -49,6 +49,9 @@ async fn main() -> anyhow::Result<()> {
 
     let state = state::AppState::new(cfg);
 
+    // kimir / xrayr 落地机：agent 退成纯 dns.json 下发代理（见 PanelConfig::is_proxy_only）。
+    let proxy_only = state.config.panel.is_proxy_only();
+
     // Load rules + dns forward map from persisted dns.json + rules/ directory
     load_all_rules(&state);
     load_dns_forward_map(&state);
@@ -57,8 +60,8 @@ async fn main() -> anyhow::Result<()> {
     let ip_urls = fetch_ip_detect_urls(&state).await;
     resolve_target(&state, &ip_urls).await;
 
-    // Firewall
-    let fw_backend = if state.config.firewall.enabled {
+    // Firewall — proxy-only nodes don't bind 53/443, so don't open them either.
+    let fw_backend = if state.config.firewall.enabled && !proxy_only {
         let backend = firewall::detect_backend(&state.config.firewall.backend);
         info!("firewall backend: {backend:?}");
         let mut ports = vec![53u16, 443];
@@ -79,24 +82,45 @@ async fn main() -> anyhow::Result<()> {
     info!("rules loaded: {}", state.rules.load().rule_count());
     info!("sources: {}", state.sources.load().entries.len());
 
-    let s1 = state.clone();
-    let s1t = state.clone();
-    let s2 = state.clone();
-    let s3 = state.clone();
-    let s4 = state.clone();
-    let s7 = state.clone();
+    // The local management panel and gRPC control stream run in EVERY mode — a
+    // proxy-only transit node still receives dns.json pushes and reports heartbeats.
+    {
+        let s = state.clone();
+        tokio::spawn(async move { panel::run_panel(s).await });
+    }
+    {
+        let s = state.clone();
+        tokio::spawn(async move { grpc_client::run_grpc_client(s).await });
+    }
 
-    let dns_handle = tokio::spawn(async move { dns::run_dns_server(s1).await });
-    let dns_tcp_handle = tokio::spawn(async move { dns::run_dns_server_tcp(s1t).await });
-    let sni_handle = tokio::spawn(async move { sni::run_sni_proxy(s2).await });
-    let panel_handle = tokio::spawn(async move { panel::run_panel(s3).await });
-    let http_handle = tokio::spawn(async move { sni::run_http_proxy(s4).await });
-    let grpc_handle = tokio::spawn(async move { grpc_client::run_grpc_client(s7).await });
+    if proxy_only {
+        // kimir / xrayr: KimiR/XrayR owns DNS:53 and SNI:443. Don't start our own
+        // listeners (they'd fight for the ports) and don't repoint system DNS.
+        info!(
+            "deploy_mode='{}' → proxy-only agent: not starting DNS/SNI/HTTP listeners, leaving system DNS untouched",
+            state.config.panel.deploy_mode
+        );
+        // Self-heal: an older agent (which didn't know about deploy_mode) may have
+        // repointed this host's system DNS on a previous run. Undo that here so the OS
+        // / KimiR owns DNS again. cleanup() only removes soho-tagged entries, so it's a
+        // harmless no-op on hosts that were never touched.
+        sysdns::cleanup();
+    } else {
+        let s1 = state.clone();
+        let s1t = state.clone();
+        let s2 = state.clone();
+        let s4 = state.clone();
+        tokio::spawn(async move { dns::run_dns_server(s1).await });
+        tokio::spawn(async move { dns::run_dns_server_tcp(s1t).await });
+        tokio::spawn(async move { sni::run_sni_proxy(s2).await });
+        tokio::spawn(async move { sni::run_http_proxy(s4).await });
 
-    // Point system DNS to our own DNS listener (transit nodes only)
-    if state.config.panel.node_type != "unlock" {
-        let local_ip = state.config.local_dns_ip();
-        sysdns::apply(&[&local_ip]);
+        // Point system DNS to our own DNS listener (transit nodes only; the unlock
+        // 母节点 keeps the host's normal resolver).
+        if state.config.panel.node_type != "unlock" {
+            let local_ip = state.config.local_dns_ip();
+            sysdns::apply(&[&local_ip]);
+        }
     }
 
     // Periodic target re-resolve (for domain targets / IP refresh)
@@ -134,12 +158,6 @@ async fn main() -> anyhow::Result<()> {
     }
     // Don't cleanup sysdns on stop — DNS settings should persist across restarts
 
-    drop(dns_handle);
-    drop(dns_tcp_handle);
-    drop(sni_handle);
-    drop(panel_handle);
-    drop(http_handle);
-    drop(grpc_handle);
     Ok(())
 }
 

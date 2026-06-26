@@ -30,8 +30,21 @@ pub struct PanelConfig {
     pub token: String,
     #[serde(default = "default_node_type")]
     pub node_type: String,
+    #[serde(default = "default_deploy_mode")]
+    pub deploy_mode: String,
     #[serde(default = "default_panel_interval")]
     pub heartbeat_secs: u64,
+}
+
+impl PanelConfig {
+    /// kimir / xrayr 落地机由 KimiR / XrayR 自己监听 :53/:443 做 DNS 解锁，
+    /// 此时 agent 只当 dns.json 下发代理：不启动自研 DNS/SNI/HTTP 监听、不改系统 DNS
+    /// （否则会和 KimiR/XrayR 抢端口、并把宿主机系统 DNS 改坏）。
+    /// 母节点（node_type=="unlock"）与 dns53 本地DNS 落地机仍正常提供解析。
+    pub fn is_proxy_only(&self) -> bool {
+        self.node_type != "unlock"
+            && (self.deploy_mode == "kimir" || self.deploy_mode == "xrayr")
+    }
 }
 
 impl Default for PanelConfig {
@@ -42,12 +55,17 @@ impl Default for PanelConfig {
             node_id: 0,
             token: String::new(),
             node_type: default_node_type(),
+            deploy_mode: default_deploy_mode(),
             heartbeat_secs: default_panel_interval(),
         }
     }
 }
 
 fn default_node_type() -> String { "transit".into() }
+
+// 落地机部署模式：dns53=用自研本地DNS（要起DNS server+改系统DNS）；
+// kimir/xrayr=交给 KimiR/XrayR 管DNS，agent 只当下发代理。默认 dns53 兼容历史行为。
+fn default_deploy_mode() -> String { "dns53".into() }
 
 fn default_panel_interval() -> u64 { 30 }
 
