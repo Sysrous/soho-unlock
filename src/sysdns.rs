@@ -169,6 +169,16 @@ fn cleanup_networkd() {
 // ── Raw resolv.conf: write + chattr +i to prevent DHCP overwrite ──
 
 fn apply_raw(servers: &[&str]) {
+    // Back up the host's original resolv.conf once (before we ever overwrite it) so
+    // cleanup() can restore it verbatim instead of guessing.
+    let bak = Path::new("/etc/resolv.conf.soho-orig");
+    if !bak.exists() {
+        if let Ok(cur) = std::fs::read_to_string("/etc/resolv.conf") {
+            if !cur.contains(SOHO_TAG) {
+                let _ = std::fs::write(bak, cur);
+            }
+        }
+    }
     // Remove immutable flag first (may fail if not set, that's fine)
     let _ = run("chattr", &["-i", "/etc/resolv.conf"]);
 
@@ -181,18 +191,27 @@ fn apply_raw(servers: &[&str]) {
 
 fn cleanup_raw() {
     let path = Path::new("/etc/resolv.conf");
-    if let Ok(content) = std::fs::read_to_string(path) {
-        if content.contains(SOHO_TAG) {
-            let _ = run("chattr", &["-i", "/etc/resolv.conf"]);
-            // Remove only our lines, keep others
-            let cleaned: Vec<&str> = content
-                .lines()
-                .filter(|l| !l.contains("soho-unlock"))
-                .collect();
-            let _ = std::fs::write(path, cleaned.join("\n") + "\n");
-            info!("sysdns(raw): removed our entries from resolv.conf");
-        }
+    let content = std::fs::read_to_string(path).unwrap_or_default();
+    if !content.contains(SOHO_TAG) {
+        return; // not managed by us — leave it alone
     }
+    let _ = run("chattr", &["-i", "/etc/resolv.conf"]);
+
+    let bak = Path::new("/etc/resolv.conf.soho-orig");
+    if let Ok(orig) = std::fs::read_to_string(bak) {
+        // Restore the host's original resolver exactly as it was before we took over.
+        let _ = std::fs::write(path, orig);
+        let _ = std::fs::remove_file(bak);
+        info!("sysdns(raw): restored original resolv.conf from backup");
+        return;
+    }
+    // No backup (an older agent overwrote resolv.conf wholesale). The ENTIRE block is
+    // ours — the SOHO_TAG comment plus the `nameserver <self>` / `options use-vc` lines
+    // we wrote — but those data lines don't literally contain "soho-unlock", which is
+    // why the old filter left `nameserver 127.0.0.1` behind. Drop the whole thing and
+    // fall back to public resolvers so the host can still resolve names.
+    let _ = std::fs::write(path, "nameserver 1.1.1.1\nnameserver 8.8.8.8\n");
+    info!("sysdns(raw): no backup; restored public resolvers");
 }
 
 // ── helpers ──

@@ -63,9 +63,10 @@ impl Default for PanelConfig {
 
 fn default_node_type() -> String { "transit".into() }
 
-// 落地机部署模式：dns53=用自研本地DNS（要起DNS server+改系统DNS）；
-// kimir/xrayr=交给 KimiR/XrayR 管DNS，agent 只当下发代理。默认 dns53 兼容历史行为。
-fn default_deploy_mode() -> String { "dns53".into() }
+// 落地机部署模式：dns53=用自研本地DNS（起 DNS server + 占53 + 改系统DNS）；
+// kimir/xrayr=交给 KimiR/XrayR 管DNS，agent 只当下发代理。默认 kimir：与面板后端一致，
+// 也是安全默认（不占53、不碰系统DNS）——真要用自研DNS的节点必须显式配 deploy_mode="dns53"。
+fn default_deploy_mode() -> String { "kimir".into() }
 
 fn default_panel_interval() -> u64 { 30 }
 

@@ -253,7 +253,11 @@ fn apply_config_push(state: &Arc<AppState>, cfg: &pb::ConfigPush) {
             info!("grpc: wrote {}", path.display());
         }
 
-        if state.config.panel.node_type != "unlock" {
+        // Point the host's resolver at our local DNS — ONLY for dns53 transit nodes.
+        // kimir/xrayr hand DNS to KimiR/XrayR (which consume the dns.json we just
+        // wrote), so their system DNS must never be touched. This guard was missing
+        // before, so EVERY config push re-pointed system DNS regardless of deploy_mode.
+        if !state.config.panel.is_proxy_only() && state.config.panel.node_type != "unlock" {
             let local_ip = state.config.local_dns_ip();
             crate::sysdns::apply(&[&local_ip]);
         }
@@ -287,8 +291,8 @@ fn handle_command(state: &Arc<AppState>, cmd: &pb::ServerCommand, tx: mpsc::Send
             });
         }
         "set_dns" => {
-            if state.config.panel.node_type == "unlock" {
-                warn!("grpc: ignoring set_dns on unlock server");
+            if state.config.panel.node_type == "unlock" || state.config.panel.is_proxy_only() {
+                warn!("grpc: ignoring set_dns on unlock / proxy-only (kimir/xrayr) node");
             } else {
                 let servers: Vec<&str> = cmd.data.split_whitespace().collect();
                 if servers.is_empty() {

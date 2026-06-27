@@ -75,7 +75,7 @@ GRPC_ADDR=""
 NODE_ID=""
 TOKEN=""
 NODE_TYPE="dns"
-DEPLOY_MODE="dns53"   # dns53 (自研本地DNS) | kimir | xrayr；后两者 agent 只当下发代理
+DEPLOY_MODE="kimir"   # kimir | xrayr (agent 只当下发代理) | dns53 (自研本地DNS, 占53+改系统DNS)；默认 kimir
 VERSION="latest"
 UNLOCK_TARGET=""
 
