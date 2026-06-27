@@ -16,7 +16,8 @@ pub mod pb {
 use pb::agent_service_client::AgentServiceClient;
 use pb::{agent_message, server_message};
 use pb::{
-    AgentAuth, AgentHeartbeat, AgentIpReport, AgentMessage, RegisterRequest, ReportIPsRequest,
+    AgentAuth, AgentHeartbeat, AgentIpReport, AgentMessage, PullRequest, RegisterRequest,
+    ReportIPsRequest,
 };
 
 pub async fn run_grpc_client(state: Arc<AppState>) {
@@ -108,6 +109,29 @@ async fn connect_and_stream(state: &Arc<AppState>) -> anyhow::Result<()> {
                 ipv6: String::new(),
             })
             .await;
+    }
+
+    // 2.5 Pull config over a plain unary RPC. The bidirectional Connect stream below
+    // can't traverse some HTTP/2 reverse proxies — nginx grpc_pass silently drops the
+    // bidi stream on certain setups (the agent connects + registers, then the stream
+    // dies with an h2 protocol error ~60s later and never delivers a push), while unary
+    // calls go through fine. So fetch the current config up-front over unary and apply
+    // it — that always gets through. The stream below still handles live pushes when it
+    // works, and on a bidi-broken proxy the periodic reconnect re-pulls every cycle.
+    match client
+        .pull_config(PullRequest {
+            node_id: panel.node_id as u32,
+            token: panel.token.clone(),
+            node_type: panel.node_type.clone(),
+        })
+        .await
+    {
+        Ok(resp) => {
+            let cfg = resp.into_inner();
+            info!("grpc: pulled config via unary (dns_json {} bytes)", cfg.dns_json.len());
+            apply_config_push(state, &cfg);
+        }
+        Err(e) => warn!("grpc: pull_config failed: {e}"),
     }
 
     // 3. Bidirectional stream
