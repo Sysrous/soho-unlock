@@ -244,8 +244,15 @@ fn apply_config_push(state: &Arc<AppState>, cfg: &pb::ConfigPush) {
             }
         }
 
-        let dir = &state.config.data.dns_json_dir;
-        let _ = std::fs::create_dir_all(dir);
+        // Write dns.json where the landing software actually reads it:
+        // KimiR -> /etc/KimiR/dns.json, XrayR -> /etc/XrayR/dns.json. dns53 / unlock
+        // use the agent's own configured dir (its self-hosted DNS reads that one).
+        let dir = match state.config.panel.deploy_mode.as_str() {
+            "kimir" => std::path::PathBuf::from("/etc/KimiR"),
+            "xrayr" => std::path::PathBuf::from("/etc/XrayR"),
+            _ => state.config.data.dns_json_dir.clone(),
+        };
+        let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("dns.json");
         if let Err(e) = std::fs::write(&path, &cfg.dns_json) {
             warn!("grpc: failed to write {}: {e}", path.display());
