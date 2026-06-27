@@ -151,7 +151,19 @@ impl Config {
     }
 
     pub fn dns_json_path(&self) -> PathBuf {
-        self.data.dns_json_dir.join("dns.json")
+        // kimir/xrayr 落地机把解锁配置写给对应软件读取；unlock 母节点和 dns53 落地机
+        // 用自研 DNS，dns.json 只是它自己内核的持久化 —— 写到 soho-unlock 自己的数据
+        // 目录，不该蹭 KimiR/XrayR 的目录（母节点不是落地机，deploy_mode 对它无意义）。
+        let dir = if self.panel.node_type != "unlock" {
+            match self.panel.deploy_mode.as_str() {
+                "kimir" => PathBuf::from("/etc/KimiR"),
+                "xrayr" => PathBuf::from("/etc/XrayR"),
+                _ => self.data.dir.clone(),
+            }
+        } else {
+            self.data.dir.clone()
+        };
+        dir.join("dns.json")
     }
 
     pub fn local_dns_ip(&self) -> String {

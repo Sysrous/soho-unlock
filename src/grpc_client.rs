@@ -268,16 +268,14 @@ fn apply_config_push(state: &Arc<AppState>, cfg: &pb::ConfigPush) {
             }
         }
 
-        // Write dns.json where the landing software actually reads it:
-        // KimiR -> /etc/KimiR/dns.json, XrayR -> /etc/XrayR/dns.json. dns53 / unlock
-        // use the agent's own configured dir (its self-hosted DNS reads that one).
-        let dir = match state.config.panel.deploy_mode.as_str() {
-            "kimir" => std::path::PathBuf::from("/etc/KimiR"),
-            "xrayr" => std::path::PathBuf::from("/etc/XrayR"),
-            _ => state.config.data.dns_json_dir.clone(),
-        };
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("dns.json");
+        // Write dns.json where it's actually read: kimir -> /etc/KimiR, xrayr ->
+        // /etc/XrayR (for those daemons); unlock母节点 + dns53 -> soho-unlock's own data
+        // dir (its self-hosted DNS reads that). dns_json_path() centralizes this so the
+        // write path always matches what load_all_rules() reads back.
+        let path = state.config.dns_json_path();
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
         if let Err(e) = std::fs::write(&path, &cfg.dns_json) {
             warn!("grpc: failed to write {}: {e}", path.display());
         } else {
