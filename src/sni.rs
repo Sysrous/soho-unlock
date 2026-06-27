@@ -88,7 +88,7 @@ async fn resolve_via_upstream(state: &AppState, domain: &str) -> anyhow::Result<
         };
         if sock.send_to(&query_pkt, addr).await.is_err() { continue; }
 
-        let mut resp_buf = [0u8; 512];
+        let mut resp_buf = [0u8; 2048];
         match tokio::time::timeout(timeout, sock.recv(&mut resp_buf)).await {
             Ok(Ok(len)) => {
                 if let Some(ip) = parse_a_response(&resp_buf[..len]) {
@@ -144,6 +144,10 @@ fn parse_a_response(buf: &[u8]) -> Option<std::net::Ipv4Addr> {
                 if pos >= buf.len() { return None; }
                 let len = buf[pos] as usize;
                 if len == 0 { pos += 1; break; }
+                // A compression pointer (top two bits set) terminates the name. The
+                // old code treated 0xC0 as a label length and ran off the end — which
+                // is exactly what a CNAME-chained answer like sooplive's hit.
+                if len >= 0xC0 { pos += 2; break; }
                 pos += 1 + len;
             }
         }
