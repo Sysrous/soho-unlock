@@ -118,7 +118,10 @@ fn build_dns_query(domain: &str, qtype: u16) -> Vec<u8> {
 
 fn parse_a_response(buf: &[u8]) -> Option<std::net::Ipv4Addr> {
     if buf.len() < 12 { return None; }
-    let ancount = u16::from_be_bytes([buf[4], buf[5]]);
+    // ANCOUNT is at offset 6..8; offset 4..6 is QDCOUNT. Reading QDCOUNT here meant a
+    // CNAME+A reply (2 answers) was walked only once — stopping on the CNAME, never
+    // reaching the A record — so every CNAME-fronted domain failed to resolve.
+    let ancount = u16::from_be_bytes([buf[6], buf[7]]);
     if ancount == 0 { return None; }
 
     // Skip header + question section
