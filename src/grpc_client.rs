@@ -288,10 +288,25 @@ fn apply_config_push(state: &Arc<AppState>, cfg: &pb::ConfigPush) {
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        if let Err(e) = std::fs::write(&path, &cfg.dns_json) {
-            warn!("grpc: failed to write {}: {e}", path.display());
-        } else {
-            info!("grpc: wrote {}", path.display());
+        // Only write + restart the consumer when the dns.json content actually changed.
+        // apply_config_push runs on every 60s reconnect re-pull, so writing and
+        // restarting unconditionally would bounce KimiR/XrayR every minute and drop all
+        // user connections. unwrap_or(true): if the file can't be read (first run),
+        // treat it as changed so we always write the initial copy.
+        let dns_changed = std::fs::read_to_string(&path)
+            .map(|cur| cur != cfg.dns_json)
+            .unwrap_or(true);
+        if dns_changed {
+            if let Err(e) = std::fs::write(&path, &cfg.dns_json) {
+                warn!("grpc: failed to write {}: {e}", path.display());
+            } else {
+                info!("grpc: wrote {}", path.display());
+                // KimiR/XrayR only read their dns.json at startup, so freshly-added
+                // unlock domains don't take effect until the daemon is restarted.
+                // (dns53/母节点 use soho-unlock's own in-process DNS, hot-reloaded above
+                // via state.rules.store — no external restart needed there.)
+                restart_unlock_consumer(state);
+            }
         }
 
         // Point the host's resolver at our local DNS — ONLY for dns53 transit nodes.
@@ -327,6 +342,35 @@ fn reapply_firewall(state: &Arc<AppState>) {
         state.sources.load().ip_set.len(),
         ports
     );
+}
+
+/// Restart the unlock consumer daemon after its dns.json changed, so it reloads the new
+/// unlock domains. KimiR/XrayR only read dns.json at startup. Only fires on proxy-only
+/// (kimir/xrayr) nodes — the unlock母节点 and dns53 nodes run soho-unlock's own DNS,
+/// which hot-reloads rules in-process. Runs detached so it never blocks the gRPC loop.
+fn restart_unlock_consumer(state: &Arc<AppState>) {
+    if !state.config.panel.is_proxy_only() {
+        return;
+    }
+    let svc = match state.config.panel.deploy_mode.as_str() {
+        "kimir" => "kimir",
+        "xrayr" => "xrayr",
+        _ => return,
+    }
+    .to_string();
+    std::thread::spawn(move || {
+        match std::process::Command::new(&svc).arg("restart").output() {
+            Ok(o) if o.status.success() => {
+                info!("grpc: restarted {svc} to apply new dns.json")
+            }
+            Ok(o) => warn!(
+                "grpc: '{svc} restart' exited {:?}: {}",
+                o.status.code(),
+                String::from_utf8_lossy(&o.stderr).trim()
+            ),
+            Err(e) => warn!("grpc: failed to run '{svc} restart' (is it in PATH?): {e}"),
+        }
+    });
 }
 
 fn handle_command(state: &Arc<AppState>, cmd: &pb::ServerCommand, tx: mpsc::Sender<AgentMessage>) {
