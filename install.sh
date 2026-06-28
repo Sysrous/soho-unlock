@@ -181,6 +181,7 @@ cat > "$CONFIG_FILE" <<TOML
 [server]
 dns_listen = "0.0.0.0:53"
 sni_listen = "0.0.0.0:443"
+http_listen = "0.0.0.0:80"
 panel_listen = "127.0.0.1:9190"
 
 [auth]
