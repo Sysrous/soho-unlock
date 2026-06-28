@@ -219,6 +219,19 @@ for svc in dnsmasq sniproxy smartdns mosdns; do
     pkill -x "$svc" 2>/dev/null || true
 done
 
+# Unlock servers and dns53 transit nodes run the built-in DNS on :53. But
+# systemd-resolved holds 127.0.0.53:53, so soho-unlock's 0.0.0.0:53 bind fails
+# SILENTLY and DNS unlock never starts. Turn off its stub listener so we can own :53.
+# (kimir/xrayr nodes are proxy-only and don't bind :53 — leave resolved alone there.)
+if [[ "$CFG_NODE_TYPE" == "unlock" || "$DEPLOY_MODE" == "dns53" ]]; then
+    if systemctl is-active --quiet systemd-resolved 2>/dev/null; then
+        mkdir -p /etc/systemd/resolved.conf.d
+        printf '[Resolve]\nDNSStubListener=no\n' > /etc/systemd/resolved.conf.d/00-soho-no-stub.conf
+        systemctl restart systemd-resolved 2>/dev/null || true
+        echo "  disabled systemd-resolved stub listener (freed :53 for soho-unlock)"
+    fi
+fi
+
 # --- open firewall ports 53 (DNS) and 443 (SNI) ---
 # The agent serves DNS on :53 and the SNI relay on :443. If a host firewall is
 # active it must allow them inbound or the node is unreachable (cloud security
