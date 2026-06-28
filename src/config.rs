@@ -166,6 +166,17 @@ impl Config {
         dir.join("dns.json")
     }
 
+    /// The unlock 母节点's relay ports only ever serve whitelisted landing nodes —
+    /// never the public — so the source-IP firewall is MANDATORY there, regardless of
+    /// the config flag. That way a plain binary upgrade locks the ports down (drops
+    /// everyone but the bound landing IPs, so they go invisible to internet scanners)
+    /// without anyone having to flip `[firewall] enabled` on the existing node.
+    /// proxy-only kimir/xrayr nodes don't bind these ports (KimiR/XrayR do), so they
+    /// never firewall them.
+    pub fn firewall_active(&self) -> bool {
+        (self.firewall.enabled || self.panel.node_type == "unlock") && !self.panel.is_proxy_only()
+    }
+
     pub fn local_dns_ip(&self) -> String {
         let addr = &self.server.dns_listen;
         if let Some(colon) = addr.rfind(':') {

@@ -236,6 +236,8 @@ fn extract_sni(buf: &[u8]) -> Option<String> {
 
 // HTTP Host proxy (port 80)
 pub async fn run_http_proxy(state: Arc<AppState>) -> anyhow::Result<()> {
+    // :80 HTTP relay is opt-in (http_listen unset = off). When enabled on an unlock
+    // node it's locked to the landing whitelist by firewall_active(), never exposed.
     let addr_str = &state.config.server.http_listen;
     if addr_str.is_empty() { return Ok(()); }
     let addr: SocketAddr = addr_str.parse()?;

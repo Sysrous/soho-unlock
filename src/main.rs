@@ -60,8 +60,14 @@ async fn main() -> anyhow::Result<()> {
     let ip_urls = fetch_ip_detect_urls(&state).await;
     resolve_target(&state, &ip_urls).await;
 
-    // Firewall — proxy-only nodes don't bind 53/443, so don't open them either.
-    let fw_backend = if state.config.firewall.enabled && !proxy_only {
+    // Firewall — lock the relay ports to whitelisted source IPs. Mandatory on the
+    // unlock 母节点 (firewall_active() forces it there); proxy-only kimir/xrayr nodes
+    // don't bind 53/443, so they never firewall them. NOTE: at first boot the whitelist
+    // is usually empty, so apply_rules() skips (fail-open) — the gRPC config push then
+    // re-applies it the moment the bound landing IPs arrive (see
+    // grpc_client::apply_config_push), which is what actually locks the ports down.
+    // :80 is only firewalled when explicitly enabled (http_listen set) — off by default.
+    let fw_backend = if state.config.firewall_active() {
         let backend = firewall::detect_backend(&state.config.firewall.backend);
         info!("firewall backend: {backend:?}");
         let mut ports = vec![53u16, 443];

@@ -245,8 +245,20 @@ fn apply_config_push(state: &Arc<AppState>, cfg: &pb::ConfigPush) {
             ip_set: Default::default(),
         };
         list.rebuild_set();
+
+        // Re-apply the packet firewall whenever the allow-list actually changes.
+        // main() only applies it once at startup, and apply_rules() skips an empty
+        // list — which it always is on first boot, before the panel pushes the bound
+        // landing IPs. Without re-applying here the relay ports (53/443/80) would stay
+        // open to the whole internet until the next restart: exactly the scanner
+        // exposure we must avoid. Compare against the live set so the 60s reconnect
+        // re-pull doesn't needlessly flush nft rules when nothing actually moved.
+        let changed = state.sources.load().ip_set != list.ip_set;
         let _ = list.save(&state.config.sources_path());
         state.sources.store(Arc::new(list));
+        if changed {
+            reapply_firewall(state);
+        }
     }
 
     if !cfg.dns_json.is_empty() {
@@ -291,6 +303,30 @@ fn apply_config_push(state: &Arc<AppState>, cfg: &pb::ConfigPush) {
             crate::sysdns::apply(&[&local_ip]);
         }
     }
+}
+
+/// Re-lock the relay ports to the current whitelist after a config push changes it.
+/// On the unlock 母节点 this is mandatory (firewall_active() forces it) — it's what
+/// keeps :53/:443/:80 reachable only by the bound landing nodes and invisible to
+/// scanners. A node with an empty whitelist is left fail-open by apply_rules().
+fn reapply_firewall(state: &Arc<AppState>) {
+    if !state.config.firewall_active() {
+        return;
+    }
+    let backend = crate::firewall::detect_backend(&state.config.firewall.backend);
+    if backend == crate::firewall::FwBackend::None {
+        return;
+    }
+    let mut ports = vec![53u16, 443];
+    if !state.config.server.http_listen.is_empty() {
+        ports.push(80);
+    }
+    crate::firewall::apply_rules(state, backend, &ports);
+    info!(
+        "grpc: firewall re-applied after whitelist change ({} allowed IPs, ports {:?})",
+        state.sources.load().ip_set.len(),
+        ports
+    );
 }
 
 fn handle_command(state: &Arc<AppState>, cmd: &pb::ServerCommand, tx: mpsc::Sender<AgentMessage>) {
