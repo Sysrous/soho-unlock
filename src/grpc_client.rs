@@ -317,8 +317,10 @@ fn apply_config_push(state: &Arc<AppState>, cfg: &pb::ConfigPush) {
 
 /// Re-lock the relay ports to the current whitelist after a config push changes it.
 /// On the unlock 母节点 this is mandatory (firewall_active() forces it) — it's what
-/// keeps :53/:443/:80 reachable only by the bound landing nodes and invisible to
-/// scanners. A node with an empty whitelist is left fail-open by apply_rules().
+/// keeps the DNS port (dns_port → 10053), :443 and :80 reachable only by the bound
+/// landing nodes and invisible to scanners. MUST use the same dns_port() as main()'s
+/// startup apply, or a config push re-locks the wrong port and leaves :10053 (an
+/// open-resolver-capable DNS) exposed. Empty whitelist → fail-open by apply_rules().
 fn reapply_firewall(state: &Arc<AppState>) {
     if !state.config.firewall_active() {
         return;
@@ -327,7 +329,7 @@ fn reapply_firewall(state: &Arc<AppState>) {
     if backend == crate::firewall::FwBackend::None {
         return;
     }
-    let mut ports = vec![53u16, 443];
+    let mut ports = vec![state.config.dns_port(), 443];
     if !state.config.server.http_listen.is_empty() {
         ports.push(80);
     }
