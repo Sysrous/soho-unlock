@@ -70,7 +70,7 @@ async fn main() -> anyhow::Result<()> {
     let fw_backend = if state.config.firewall_active() {
         let backend = firewall::detect_backend(&state.config.firewall.backend);
         info!("firewall backend: {backend:?}");
-        let mut ports = vec![53u16, 443];
+        let mut ports = vec![state.config.dns_port(), 443];
         if !state.config.server.http_listen.is_empty() {
             ports.push(80);
         }
@@ -112,6 +112,10 @@ async fn main() -> anyhow::Result<()> {
         // harmless no-op on hosts that were never touched.
         sysdns::cleanup();
     } else {
+        // Only the 母节点 (node_type=="unlock", the only non-proxy-only node) reaches
+        // here: it serves the unlock DNS (UDP + TCP, on dns_port → 10053) and the SNI/
+        // HTTP relays. It never repoints the host resolver — the dns53 "own DNS + change
+        // system DNS" landing mode is gone; all landing nodes are kimir/xrayr proxy-only.
         let s1 = state.clone();
         let s1t = state.clone();
         let s2 = state.clone();
@@ -120,13 +124,6 @@ async fn main() -> anyhow::Result<()> {
         tokio::spawn(async move { dns::run_dns_server_tcp(s1t).await });
         tokio::spawn(async move { sni::run_sni_proxy(s2).await });
         tokio::spawn(async move { sni::run_http_proxy(s4).await });
-
-        // Point system DNS to our own DNS listener (transit nodes only; the unlock
-        // 母节点 keeps the host's normal resolver).
-        if state.config.panel.node_type != "unlock" {
-            let local_ip = state.config.local_dns_ip();
-            sysdns::apply(&[&local_ip]);
-        }
     }
 
     // Periodic target re-resolve (for domain targets / IP refresh)

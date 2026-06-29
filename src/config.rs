@@ -37,13 +37,11 @@ pub struct PanelConfig {
 }
 
 impl PanelConfig {
-    /// kimir / xrayr 落地机由 KimiR / XrayR 自己监听 :53/:443 做 DNS 解锁，
-    /// 此时 agent 只当 dns.json 下发代理：不启动自研 DNS/SNI/HTTP 监听、不改系统 DNS
-    /// （否则会和 KimiR/XrayR 抢端口、并把宿主机系统 DNS 改坏）。
-    /// 母节点（node_type=="unlock"）与 dns53 本地DNS 落地机仍正常提供解析。
+    /// 所有落地机都交给 KimiR / XrayR 自己做 DNS 解锁，agent 只当 dns.json 下发代理：
+    /// 不启动自研 DNS/SNI/HTTP 监听、绝不碰系统 DNS（旧的 dns53「自研本地DNS+改系统DNS」
+    /// 模式已废弃）。只有母节点（node_type=="unlock"）才跑自研 DNS（在 10053 上答 KimiR）。
     pub fn is_proxy_only(&self) -> bool {
         self.node_type != "unlock"
-            && (self.deploy_mode == "kimir" || self.deploy_mode == "xrayr")
     }
 }
 
@@ -63,9 +61,8 @@ impl Default for PanelConfig {
 
 fn default_node_type() -> String { "transit".into() }
 
-// 落地机部署模式：dns53=用自研本地DNS（起 DNS server + 占53 + 改系统DNS）；
-// kimir/xrayr=交给 KimiR/XrayR 管DNS，agent 只当下发代理。默认 kimir：与面板后端一致，
-// 也是安全默认（不占53、不碰系统DNS）——真要用自研DNS的节点必须显式配 deploy_mode="dns53"。
+// 落地机部署模式：kimir / xrayr —— 解锁配置写给对应软件读取（/etc/KimiR 或 /etc/XrayR），
+// agent 只当下发代理，不碰系统 DNS。默认 kimir。（dns53「自研本地DNS+改系统DNS」模式已废弃。）
 fn default_deploy_mode() -> String { "kimir".into() }
 
 fn default_panel_interval() -> u64 { 30 }
@@ -177,6 +174,19 @@ impl Config {
         (self.firewall.enabled || self.panel.node_type == "unlock") && !self.panel.is_proxy_only()
     }
 
+    /// The port the built-in DNS listens on (母节点 only). Parsed from dns_listen so the
+    /// firewall rules and the panel's dns.json stay in lockstep with it. Default 10053:
+    /// a clean high port that sidesteps the systemd-resolved/:53 conflict and serves
+    /// both UDP and TCP cleanly (the old :53 path had UDP issues).
+    pub fn dns_port(&self) -> u16 {
+        self.server
+            .dns_listen
+            .rsplit(':')
+            .next()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(10053)
+    }
+
     pub fn local_dns_ip(&self) -> String {
         let addr = &self.server.dns_listen;
         if let Some(colon) = addr.rfind(':') {
@@ -231,7 +241,7 @@ impl Default for DataConfig {
     }
 }
 
-fn default_dns_listen() -> String { "0.0.0.0:53".into() }
+fn default_dns_listen() -> String { "0.0.0.0:10053".into() }
 fn default_sni_listen() -> String { "0.0.0.0:443".into() }
 fn default_panel_listen() -> String { "0.0.0.0:9190".into() }
 fn default_workers() -> usize { 2 }

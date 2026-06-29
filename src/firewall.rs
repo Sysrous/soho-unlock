@@ -50,9 +50,11 @@ pub fn apply_rules(state: &Arc<AppState>, backend: FwBackend, ports: &[u16]) {
     }
 
     let ip_refs: Vec<&str> = ips.iter().map(|s| s.as_str()).collect();
+    // DNS also needs UDP open; it lives on dns_port() (10053), not the old hardcoded 53.
+    let udp_port = state.config.dns_port();
     match backend {
-        FwBackend::Iptables => apply_iptables(&ip_refs, ports),
-        FwBackend::Nftables => apply_nftables(&ip_refs, ports),
+        FwBackend::Iptables => apply_iptables(&ip_refs, ports, udp_port),
+        FwBackend::Nftables => apply_nftables(&ip_refs, ports, udp_port),
         FwBackend::None => {}
     }
 }
@@ -65,7 +67,7 @@ pub fn cleanup(backend: FwBackend) {
     }
 }
 
-fn apply_iptables(ips: &[&str], ports: &[u16]) {
+fn apply_iptables(ips: &[&str], ports: &[u16], udp_port: u16) {
     // Flush or create our chain
     let _ = run("iptables", &["-N", CHAIN]);
     let _ = run("iptables", &["-F", CHAIN]);
@@ -92,14 +94,15 @@ fn apply_iptables(ips: &[&str], ports: &[u16]) {
                 "-I", "INPUT", "1", "-p", "tcp", "--dport", &port_str, "-j", CHAIN
             ]);
         }
-        // UDP for DNS
-        if *port == 53 {
+        // UDP for DNS (on the configured dns_port, e.g. 10053)
+        if *port == udp_port {
+            let udp_str = udp_port.to_string();
             let check_udp = run("iptables", &[
-                "-C", "INPUT", "-p", "udp", "--dport", "53", "-j", CHAIN
+                "-C", "INPUT", "-p", "udp", "--dport", &udp_str, "-j", CHAIN
             ]);
             if !check_udp {
                 let _ = run("iptables", &[
-                    "-I", "INPUT", "1", "-p", "udp", "--dport", "53", "-j", CHAIN
+                    "-I", "INPUT", "1", "-p", "udp", "--dport", &udp_str, "-j", CHAIN
                 ]);
             }
         }
@@ -119,7 +122,7 @@ fn cleanup_iptables() {
     info!("firewall(iptables): cleaned up");
 }
 
-fn apply_nftables(ips: &[&str], ports: &[u16]) {
+fn apply_nftables(ips: &[&str], ports: &[u16], udp_port: u16) {
     // Create table + chain
     let _ = run("nft", &["add", "table", "inet", NFT_TABLE]);
     let _ = run("nft", &[
@@ -156,7 +159,7 @@ fn apply_nftables(ips: &[&str], ports: &[u16]) {
     ]);
     let _ = run("nft", &[
         "add", "rule", "inet", NFT_TABLE, "input",
-        &format!("udp dport 53 ip saddr @allowed_sources accept")
+        &format!("udp dport {udp_port} ip saddr @allowed_sources accept")
     ]);
     // Drop rest on those ports
     let _ = run("nft", &[
@@ -165,7 +168,7 @@ fn apply_nftables(ips: &[&str], ports: &[u16]) {
     ]);
     let _ = run("nft", &[
         "add", "rule", "inet", NFT_TABLE, "input",
-        "udp dport 53 drop"
+        &format!("udp dport {udp_port} drop")
     ]);
 
     info!("firewall(nftables): applied {} source IPs on ports {:?}", ips.len(), ports);

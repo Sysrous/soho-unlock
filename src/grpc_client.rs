@@ -309,14 +309,9 @@ fn apply_config_push(state: &Arc<AppState>, cfg: &pb::ConfigPush) {
             }
         }
 
-        // Point the host's resolver at our local DNS — ONLY for dns53 transit nodes.
-        // kimir/xrayr hand DNS to KimiR/XrayR (which consume the dns.json we just
-        // wrote), so their system DNS must never be touched. This guard was missing
-        // before, so EVERY config push re-pointed system DNS regardless of deploy_mode.
-        if !state.config.panel.is_proxy_only() && state.config.panel.node_type != "unlock" {
-            let local_ip = state.config.local_dns_ip();
-            crate::sysdns::apply(&[&local_ip]);
-        }
+        // No system-DNS repointing anywhere: landing nodes are all kimir/xrayr
+        // proxy-only (KimiR/XrayR own DNS), and the 母节点 keeps the host resolver. The
+        // old dns53 path that rewrote resolv.conf is gone.
     }
 }
 

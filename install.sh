@@ -75,13 +75,13 @@ GRPC_ADDR=""
 NODE_ID=""
 TOKEN=""
 NODE_TYPE="dns"
-DEPLOY_MODE="kimir"   # kimir | xrayr (agent 只当下发代理) | dns53 (自研本地DNS, 占53+改系统DNS)；默认 kimir
+DEPLOY_MODE="kimir"   # kimir | xrayr —— agent 只当下发代理(写 /etc/KimiR 或 /etc/XrayR)；默认 kimir
 VERSION="latest"
 UNLOCK_TARGET=""
 
 usage() {
     echo "Usage:"
-    echo "  Install:   bash <(curl -sL URL) --panel URL --node-id N --token T [--grpc URL] [--type dns|transit] [--deploy-mode dns53|kimir|xrayr] [--target IP] [--version vX.Y.Z]"
+    echo "  Install:   bash <(curl -sL URL) --panel URL --node-id N --token T [--grpc URL] [--type dns|transit] [--deploy-mode kimir|xrayr] [--target IP] [--version vX.Y.Z]"
     echo "  Upgrade:   bash <(curl -sL URL) upgrade [vX.Y.Z]"
     echo "  Uninstall: bash <(curl -sL URL) uninstall"
     exit 1
@@ -177,14 +177,14 @@ case "$NODE_TYPE" in
     *)          CFG_NODE_TYPE="$NODE_TYPE" ;;
 esac
 
-# Unlock母节点 + dns53 transit nodes bind :53/:443 themselves, so enable the built-in
+# The unlock母节点 binds :10053 (DNS) + :443 (SNI) itself, so enable the built-in
 # source-IP firewall: it locks those ports to the whitelisted landing/source IPs and
 # DROPs everyone else, keeping them invisible to internet scanners. Proxy-only
 # kimir/xrayr landing nodes don't bind these ports (KimiR/XrayR do), so no firewall.
 # The :80 HTTP relay stays OFF by default (http_listen empty) — leave it closed unless
 # a specific unlock target genuinely needs plain-http relay, in which case set
 # http_listen and it is auto-locked to the same landing whitelist.
-if [[ "$CFG_NODE_TYPE" == "unlock" || "$DEPLOY_MODE" == "dns53" ]]; then
+if [[ "$CFG_NODE_TYPE" == "unlock" ]]; then
     CFG_FW_ENABLED="true"
 else
     CFG_FW_ENABLED="false"
@@ -193,7 +193,7 @@ CFG_HTTP_LISTEN=""
 
 cat > "$CONFIG_FILE" <<TOML
 [server]
-dns_listen = "0.0.0.0:53"
+dns_listen = "0.0.0.0:10053"
 sni_listen = "0.0.0.0:443"
 http_listen = "$CFG_HTTP_LISTEN"
 panel_listen = "127.0.0.1:9190"
@@ -234,35 +234,25 @@ for svc in dnsmasq sniproxy smartdns mosdns; do
     pkill -x "$svc" 2>/dev/null || true
 done
 
-# Unlock servers and dns53 transit nodes run the built-in DNS on :53. But
-# systemd-resolved holds 127.0.0.53:53, so soho-unlock's 0.0.0.0:53 bind fails
-# SILENTLY and DNS unlock never starts. Turn off its stub listener so we can own :53.
-# (kimir/xrayr nodes are proxy-only and don't bind :53 — leave resolved alone there.)
-if [[ "$CFG_NODE_TYPE" == "unlock" || "$DEPLOY_MODE" == "dns53" ]]; then
-    if systemctl is-active --quiet systemd-resolved 2>/dev/null; then
-        mkdir -p /etc/systemd/resolved.conf.d
-        printf '[Resolve]\nDNSStubListener=no\n' > /etc/systemd/resolved.conf.d/00-soho-no-stub.conf
-        systemctl restart systemd-resolved 2>/dev/null || true
-        echo "  disabled systemd-resolved stub listener (freed :53 for soho-unlock)"
-    fi
-fi
+# Note: the 母节点 binds DNS on :10053 (a clean high port), not :53, so there's no
+# systemd-resolved / dnsmasq :53 conflict to work around — KimiR/XrayR query it on 10053.
 
-# --- open firewall ports 53 (DNS) + 443 (SNI) [+ 80 (HTTP relay) on unlock/dns53] ---
-# The agent serves DNS on :53, the SNI relay on :443, and (on unlock/dns53 nodes) the
+# --- open firewall ports 10053 (DNS) + 443 (SNI) [+ 80 (HTTP relay) if enabled] ---
+# The 母节点 serves DNS on :10053 (UDP+TCP), the SNI relay on :443, and optionally the
 # HTTP relay on :80. If a host firewall is active it must allow them inbound or the node
 # is unreachable. This only opens them at the host firewall; the agent's own source-IP
 # firewall (priority -1) still DROPs anyone but the whitelisted landing nodes, so the
 # ports stay invisible to scanners. (Cloud security groups are a separate layer.)
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi active; then
-    ufw allow 53 >/dev/null 2>&1 || true
+    ufw allow 10053 >/dev/null 2>&1 || true
     ufw allow 443/tcp >/dev/null 2>&1 || true
     [[ -n "$CFG_HTTP_LISTEN" ]] && ufw allow 80/tcp >/dev/null 2>&1 || true
-    echo "ufw: allowed 53 and 443${CFG_HTTP_LISTEN:+ and 80}"
+    echo "ufw: allowed 10053 and 443${CFG_HTTP_LISTEN:+ and 80}"
 elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-    firewall-cmd --permanent --add-port=53/tcp --add-port=53/udp --add-port=443/tcp >/dev/null 2>&1 || true
+    firewall-cmd --permanent --add-port=10053/tcp --add-port=10053/udp --add-port=443/tcp >/dev/null 2>&1 || true
     [[ -n "$CFG_HTTP_LISTEN" ]] && firewall-cmd --permanent --add-port=80/tcp >/dev/null 2>&1 || true
     firewall-cmd --reload >/dev/null 2>&1 || true
-    echo "firewalld: allowed 53 and 443${CFG_HTTP_LISTEN:+ and 80}"
+    echo "firewalld: allowed 10053 and 443${CFG_HTTP_LISTEN:+ and 80}"
 fi
 
 # --- install systemd service ---
