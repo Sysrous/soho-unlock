@@ -1,6 +1,6 @@
 ﻿[package]
 name = "soho-unlock"
-version = "0.2.28"
+version = "0.2.29"
 edition = "2021"
 description = "Lightweight DNS unlock agent with SNI proxy and micro panel"
 

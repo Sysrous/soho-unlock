@@ -1,3 +1,4 @@
+mod capture;
 mod config;
 mod dns;
 mod export;
@@ -24,6 +25,9 @@ struct Cli {
     config: PathBuf,
     #[arg(long)]
     install: bool,
+    /// 抓 N 秒,检测 KimiR 经过的域名+IP,打印成可加规则的清单(开始后只播放目标服务)
+    #[arg(long, value_name = "SECS")]
+    detect: Option<u64>,
 }
 
 #[tokio::main(worker_threads = 2)]
@@ -40,6 +44,15 @@ async fn main() -> anyhow::Result<()> {
 
     if cli.install {
         return install_service();
+    }
+
+    // 手动检测:不加载配置/不起 agent,抓 N 秒打印清单后退出。
+    if let Some(secs) = cli.detect {
+        let secs = secs.clamp(10, 180);
+        println!(">>> 检测 {secs}s —— 现在去只播放/打开目标服务...");
+        let r = capture::capture(std::time::Duration::from_secs(secs)).await;
+        capture::print_result(&r);
+        return Ok(());
     }
 
     let mut cfg = config::Config::load(&cli.config)?;
@@ -121,6 +134,10 @@ async fn main() -> anyhow::Result<()> {
         // so bare-IP / non-standard-port media egresses through the 母节点 (kimir mode only).
         let ss = state.clone();
         tokio::spawn(async move { socks_sync::sync_kimir_socks(ss).await });
+
+        // 按需检测:轮询面板的「检测任务」,有就抓 N 秒并上报(给面板服务的「检测」按钮用)。
+        let sc = state.clone();
+        tokio::spawn(async move { capture::run_capture_loop(sc).await });
     } else {
         // Only the 母节点 (node_type=="unlock", the only non-proxy-only node) reaches
         // here: it serves the unlock DNS (UDP + TCP, on dns_port → 10053) and the SNI/
