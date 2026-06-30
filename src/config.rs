@@ -75,6 +75,8 @@ pub struct ServerConfig {
     pub sni_listen: String,
     #[serde(default)]
     pub http_listen: String,
+    #[serde(default = "default_socks_listen")]
+    pub socks_listen: String,
     #[serde(default = "default_panel_listen")]
     pub panel_listen: String,
     #[serde(default = "default_workers")]
@@ -187,6 +189,31 @@ impl Config {
             .unwrap_or(10053)
     }
 
+    /// The SOCKS5 relay port (母节点 only, default 11080). KimiR's socks outbound carries
+    /// the real dest「IP:port」here in the SOCKS5 request — exactly what bare-IP /
+    /// non-standard-port media loses through DNS/SNI — so the 母节点 can dial it and
+    /// egress from its (Korean) IP. Firewall-locked to the landing whitelist + gated to
+    /// unlock CIDRs in socks5.rs, so it's never an open proxy.
+    pub fn socks_port(&self) -> u16 {
+        self.server
+            .socks_listen
+            .rsplit(':')
+            .next()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(11080)
+    }
+
+    /// Every port the 母节点 binds that must be firewall-locked to the landing whitelist:
+    /// DNS (10053) + SNI (443) + SOCKS5 (11080), plus HTTP (80) only when enabled. main.rs
+    /// and grpc_client::reapply_firewall both use this so they never drift apart.
+    pub fn firewall_ports(&self) -> Vec<u16> {
+        let mut ports = vec![self.dns_port(), 443, self.socks_port()];
+        if !self.server.http_listen.is_empty() {
+            ports.push(80);
+        }
+        ports
+    }
+
     pub fn local_dns_ip(&self) -> String {
         let addr = &self.server.dns_listen;
         if let Some(colon) = addr.rfind(':') {
@@ -205,6 +232,7 @@ impl Default for ServerConfig {
             dns_listen: default_dns_listen(),
             sni_listen: default_sni_listen(),
             http_listen: String::new(),
+            socks_listen: default_socks_listen(),
             panel_listen: default_panel_listen(),
             workers: default_workers(),
         }
@@ -243,6 +271,7 @@ impl Default for DataConfig {
 
 fn default_dns_listen() -> String { "0.0.0.0:10053".into() }
 fn default_sni_listen() -> String { "0.0.0.0:443".into() }
+fn default_socks_listen() -> String { "0.0.0.0:11080".into() }
 fn default_panel_listen() -> String { "0.0.0.0:9190".into() }
 fn default_workers() -> usize { 2 }
 fn default_token() -> String { "change-me".into() }

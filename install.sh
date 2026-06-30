@@ -246,13 +246,14 @@ done
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi active; then
     ufw allow 10053 >/dev/null 2>&1 || true
     ufw allow 443/tcp >/dev/null 2>&1 || true
+    ufw allow 11080/tcp >/dev/null 2>&1 || true
     [[ -n "$CFG_HTTP_LISTEN" ]] && ufw allow 80/tcp >/dev/null 2>&1 || true
-    echo "ufw: allowed 10053 and 443${CFG_HTTP_LISTEN:+ and 80}"
+    echo "ufw: allowed 10053, 443, 11080${CFG_HTTP_LISTEN:+ and 80}"
 elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-    firewall-cmd --permanent --add-port=10053/tcp --add-port=10053/udp --add-port=443/tcp >/dev/null 2>&1 || true
+    firewall-cmd --permanent --add-port=10053/tcp --add-port=10053/udp --add-port=443/tcp --add-port=11080/tcp >/dev/null 2>&1 || true
     [[ -n "$CFG_HTTP_LISTEN" ]] && firewall-cmd --permanent --add-port=80/tcp >/dev/null 2>&1 || true
     firewall-cmd --reload >/dev/null 2>&1 || true
-    echo "firewalld: allowed 10053 and 443${CFG_HTTP_LISTEN:+ and 80}"
+    echo "firewalld: allowed 10053, 443, 11080${CFG_HTTP_LISTEN:+ and 80}"
 fi
 
 # --- install systemd service ---

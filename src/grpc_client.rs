@@ -329,10 +329,7 @@ fn reapply_firewall(state: &Arc<AppState>) {
     if backend == crate::firewall::FwBackend::None {
         return;
     }
-    let mut ports = vec![state.config.dns_port(), 443];
-    if !state.config.server.http_listen.is_empty() {
-        ports.push(80);
-    }
+    let ports = state.config.firewall_ports();
     crate::firewall::apply_rules(state, backend, &ports);
     info!(
         "grpc: firewall re-applied after whitelist change ({} allowed IPs, ports {:?})",

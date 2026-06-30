@@ -81,7 +81,7 @@ async fn handle_sni_connection(state: Arc<AppState>, mut inbound: TcpStream) -> 
     Ok(())
 }
 
-async fn resolve_via_upstream(state: &AppState, domain: &str) -> anyhow::Result<std::net::IpAddr> {
+pub async fn resolve_via_upstream(state: &AppState, domain: &str) -> anyhow::Result<std::net::IpAddr> {
     let query_pkt = build_dns_query(domain, 1); // A record
     let timeout = Duration::from_millis(state.config.upstream.timeout_ms);
 
@@ -175,7 +175,7 @@ fn parse_a_response(buf: &[u8]) -> Option<std::net::Ipv4Addr> {
     None
 }
 
-async fn relay(mut a: TcpStream, mut b: TcpStream) {
+pub async fn relay(mut a: TcpStream, mut b: TcpStream) {
     let _ = tokio::io::copy_bidirectional(&mut a, &mut b).await;
 }
 

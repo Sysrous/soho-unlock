@@ -7,6 +7,7 @@ mod panel;
 mod rules;
 mod service;
 mod sni;
+mod socks5;
 mod state;
 mod sysdns;
 use clap::Parser;
@@ -70,10 +71,7 @@ async fn main() -> anyhow::Result<()> {
     let fw_backend = if state.config.firewall_active() {
         let backend = firewall::detect_backend(&state.config.firewall.backend);
         info!("firewall backend: {backend:?}");
-        let mut ports = vec![state.config.dns_port(), 443];
-        if !state.config.server.http_listen.is_empty() {
-            ports.push(80);
-        }
+        let ports = state.config.firewall_ports();
         firewall::apply_rules(&state, backend, &ports);
         Some(backend)
     } else {
@@ -120,10 +118,14 @@ async fn main() -> anyhow::Result<()> {
         let s1t = state.clone();
         let s2 = state.clone();
         let s4 = state.clone();
+        let s_socks = state.clone();
         tokio::spawn(async move { dns::run_dns_server(s1).await });
         tokio::spawn(async move { dns::run_dns_server_tcp(s1t).await });
         tokio::spawn(async move { sni::run_sni_proxy(s2).await });
         tokio::spawn(async move { sni::run_http_proxy(s4).await });
+        // SOCKS5 relay: carries bare-IP / non-standard-port media (the dest KimiR's socks
+        // outbound hands over) and egresses it from the 母节点's Korean IP. CIDR-gated.
+        tokio::spawn(async move { socks5::run_socks5(s_socks).await });
     }
 
     // Periodic target re-resolve (for domain targets / IP refresh)
