@@ -55,8 +55,42 @@ async fn handle_socks5(state: Arc<AppState>, mut inbound: TcpStream) -> anyhow::
     let nmethods = hdr[1] as usize;
     let mut methods = vec![0u8; nmethods];
     inbound.read_exact(&mut methods).await?;
-    // reply: choose no-auth (0x00)
-    inbound.write_all(&[0x05, 0x00]).await?;
+
+    // Method selection. If creds are configured, REQUIRE username/password (RFC 1929) so
+    // the relay is never an open proxy even if the source-IP firewall is ever bypassed.
+    // No creds → no-auth (firewall is then the only lock).
+    let want_user = &state.config.server.socks_user;
+    if !want_user.is_empty() {
+        if !methods.contains(&0x02) {
+            inbound.write_all(&[0x05, 0xFF]).await?; // no acceptable method
+            return Ok(());
+        }
+        inbound.write_all(&[0x05, 0x02]).await?;
+        // sub-negotiation: VER(0x01) ULEN UNAME PLEN PASSWD
+        let mut v = [0u8; 1];
+        inbound.read_exact(&mut v).await?;
+        if v[0] != 0x01 {
+            return Ok(());
+        }
+        let mut ulen = [0u8; 1];
+        inbound.read_exact(&mut ulen).await?;
+        let mut uname = vec![0u8; ulen[0] as usize];
+        inbound.read_exact(&mut uname).await?;
+        let mut plen = [0u8; 1];
+        inbound.read_exact(&mut plen).await?;
+        let mut passwd = vec![0u8; plen[0] as usize];
+        inbound.read_exact(&mut passwd).await?;
+        let ok = uname.as_slice() == want_user.as_bytes()
+            && passwd.as_slice() == state.config.server.socks_pass.as_bytes();
+        if !ok {
+            inbound.write_all(&[0x01, 0x01]).await?; // auth failure
+            debug!("socks5 auth failed");
+            return Ok(());
+        }
+        inbound.write_all(&[0x01, 0x00]).await?; // auth success
+    } else {
+        inbound.write_all(&[0x05, 0x00]).await?; // no-auth
+    }
 
     // --- request: VER CMD RSV ATYP DST.ADDR DST.PORT ---
     let mut req = [0u8; 4];

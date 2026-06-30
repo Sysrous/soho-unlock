@@ -77,6 +77,13 @@ pub struct ServerConfig {
     pub http_listen: String,
     #[serde(default = "default_socks_listen")]
     pub socks_listen: String,
+    // SOCKS5 username/password (RFC 1929). When set, the relay REQUIRES auth — so even if
+    // the source-IP firewall is ever bypassed it's not an open proxy. Empty = no-auth.
+    // Kept out of source on purpose; the panel/operator puts random creds in config.toml.
+    #[serde(default)]
+    pub socks_user: String,
+    #[serde(default)]
+    pub socks_pass: String,
     #[serde(default = "default_panel_listen")]
     pub panel_listen: String,
     #[serde(default = "default_workers")]
@@ -233,6 +240,8 @@ impl Default for ServerConfig {
             sni_listen: default_sni_listen(),
             http_listen: String::new(),
             socks_listen: default_socks_listen(),
+            socks_user: String::new(),
+            socks_pass: String::new(),
             panel_listen: default_panel_listen(),
             workers: default_workers(),
         }
