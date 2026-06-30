@@ -1,4 +1,6 @@
+use std::io::Read;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
@@ -178,4 +180,86 @@ async fn reply(inbound: &mut TcpStream, rep: u8) -> anyhow::Result<()> {
         .write_all(&[0x05, rep, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
         .await?;
     Ok(())
+}
+
+// ── auto-generated SOCKS5 credentials ──
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct SocksCreds {
+    pub port: u16,
+    pub user: String,
+    pub pass: String,
+}
+
+const CRED_CHARS: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
+fn urandom(n: usize) -> Vec<u8> {
+    let mut buf = vec![0u8; n];
+    if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
+        let _ = f.read_exact(&mut buf);
+    }
+    buf
+}
+
+fn rand_str(len: usize) -> String {
+    urandom(len)
+        .iter()
+        .map(|b| CRED_CHARS[(*b as usize) % CRED_CHARS.len()] as char)
+        .collect()
+}
+
+impl SocksCreds {
+    fn generate() -> Self {
+        let r = urandom(2);
+        // random high port 20000..=59999 (firewall-locked + creds, so the value is just
+        // there to dodge casual scanners, not relied on for security)
+        let port = 20000 + ((u16::from(r[0]) << 8 | u16::from(r[1])) % 40000);
+        SocksCreds {
+            port,
+            user: rand_str(14),
+            pass: rand_str(24),
+        }
+    }
+}
+
+/// Make sure the 母节点's SOCKS5 has a port + creds WITHOUT the operator editing anything,
+/// so a plain `upgrade` just works. Priority: explicit config.toml creds win; else reuse
+/// persisted socks.creds (stable across restarts/upgrades); else generate fresh random ones
+/// and persist (0600). The result lands back in `cfg.server` so the firewall and run_socks5
+/// just use the normal config fields. Proxy-only landing nodes skip this (no SOCKS5 there).
+pub fn ensure_creds(cfg: &mut crate::config::Config, data_dir: &Path) {
+    if cfg.panel.is_proxy_only() {
+        return;
+    }
+    if !cfg.server.socks_user.is_empty() {
+        return; // operator set creds by hand
+    }
+    let path = data_dir.join("socks.creds");
+    if let Ok(text) = std::fs::read_to_string(&path) {
+        if let Ok(c) = serde_json::from_str::<SocksCreds>(&text) {
+            cfg.server.socks_listen = format!("0.0.0.0:{}", c.port);
+            cfg.server.socks_user = c.user;
+            cfg.server.socks_pass = c.pass;
+            tracing::info!("SOCKS5 creds: loaded from {}", path.display());
+            return;
+        }
+    }
+    let c = SocksCreds::generate();
+    cfg.server.socks_listen = format!("0.0.0.0:{}", c.port);
+    cfg.server.socks_user = c.user.clone();
+    cfg.server.socks_pass = c.pass.clone();
+    if let Ok(json) = serde_json::to_string_pretty(&c) {
+        if std::fs::write(&path, json).is_ok() {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+            }
+        }
+    }
+    tracing::info!(
+        "SOCKS5 creds: generated random port {} + user/pass, saved to {} (cat it to configure KimiR's socks outbound)",
+        c.port,
+        path.display()
+    );
 }

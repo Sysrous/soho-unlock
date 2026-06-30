@@ -41,12 +41,18 @@ async fn main() -> anyhow::Result<()> {
         return install_service();
     }
 
-    let cfg = config::Config::load(&cli.config)?;
+    let mut cfg = config::Config::load(&cli.config)?;
     info!("loaded config from {}", cli.config.display());
 
     std::fs::create_dir_all(&cfg.data.dir)?;
     std::fs::create_dir_all(cfg.rules_dir())?;
     std::fs::create_dir_all(cfg.export_dir())?;
+
+    // 母节点: auto-generate (or reuse) the SOCKS5 port + creds so a plain `upgrade` just
+    // works without editing config.toml. Fills cfg.server.socks_* before the firewall and
+    // state read them. Proxy-only landing nodes skip it inside ensure_creds.
+    let data_dir = cfg.data.dir.clone();
+    socks5::ensure_creds(&mut cfg, &data_dir);
 
     let state = state::AppState::new(cfg);
 
