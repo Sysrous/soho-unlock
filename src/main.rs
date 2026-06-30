@@ -8,6 +8,7 @@ mod rules;
 mod service;
 mod sni;
 mod socks5;
+mod socks_sync;
 mod state;
 mod sysdns;
 use clap::Parser;
@@ -115,6 +116,11 @@ async fn main() -> anyhow::Result<()> {
         // / KimiR owns DNS again. cleanup() only removes soho-tagged entries, so it's a
         // harmless no-op on hosts that were never touched.
         sysdns::cleanup();
+
+        // Pull SOCKS5 relay config from the panel and merge it into KimiR's outbound+route,
+        // so bare-IP / non-standard-port media egresses through the 母节点 (kimir mode only).
+        let ss = state.clone();
+        tokio::spawn(async move { socks_sync::sync_kimir_socks(ss).await });
     } else {
         // Only the 母节点 (node_type=="unlock", the only non-proxy-only node) reaches
         // here: it serves the unlock DNS (UDP + TCP, on dns_port → 10053) and the SNI/
@@ -132,6 +138,10 @@ async fn main() -> anyhow::Result<()> {
         // SOCKS5 relay: carries bare-IP / non-standard-port media (the dest KimiR's socks
         // outbound hands over) and egresses it from the 母节点's Korean IP. CIDR-gated.
         tokio::spawn(async move { socks5::run_socks5(s_socks).await });
+
+        // Report our auto-generated SOCKS5 creds to the panel so it relays them to landings.
+        let sr = state.clone();
+        tokio::spawn(async move { socks_sync::report_socks_creds(sr).await });
     }
 
     // Periodic target re-resolve (for domain targets / IP refresh)
