@@ -28,6 +28,11 @@ struct Cli {
     /// 抓 N 秒,检测 KimiR 经过的域名+IP,打印成可加规则的清单(开始后只播放目标服务)
     #[arg(long, value_name = "SECS")]
     detect: Option<u64>,
+    /// 只跑「按需检测」轮询(给面板检测按钮供数据),不启动代理/防火墙/DNS/配置同步。
+    /// 用于落地机主服务停着(防覆盖手动 KimiR 配置)、但仍要面板「检测」按钮可用的场景:
+    /// 后台单跑 `soho-unlock --capture-loop` 即可,它绝不写 KimiR 配置。
+    #[arg(long)]
+    capture_loop: bool,
 }
 
 #[tokio::main(worker_threads = 2)]
@@ -57,6 +62,15 @@ async fn main() -> anyhow::Result<()> {
 
     let mut cfg = config::Config::load(&cli.config)?;
     info!("loaded config from {}", cli.config.display());
+
+    // --capture-loop: 只轮询面板「检测任务」并上报,绝不碰 KimiR 配置/防火墙/DNS/同步。
+    // 落地机主 soho-unlock 停着(防覆盖手动配置)时,后台单跑这个进程即可让面板检测按钮可用。
+    if cli.capture_loop {
+        let state = state::AppState::new(cfg);
+        info!("capture-loop 模式:只轮询面板检测任务,不动 KimiR/防火墙/DNS/同步");
+        capture::run_capture_loop(state).await;
+        return Ok(());
+    }
 
     std::fs::create_dir_all(&cfg.data.dir)?;
     std::fs::create_dir_all(cfg.rules_dir())?;
