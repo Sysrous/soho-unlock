@@ -51,12 +51,21 @@ async fn handle_sni_connection(state: Arc<AppState>, mut inbound: TcpStream) -> 
     };
 
     let rules = state.rules.load();
-    if !rules.match_domain(&sni) {
-        debug!("sni domain not matched: {sni}");
-        return Ok(());
-    }
-
-    let real_ip = resolve_via_upstream(&state, &sni).await?;
+    // 媒体走裸 IP 时 KimiR 已把它重定向到本机,SNI 就是那个 IP、没有域名可解析。
+    // 命中解锁 CIDR 就直接连它;否则按域名走原解析路径。
+    let real_ip: std::net::IpAddr = if let Ok(ip) = sni.parse::<std::net::IpAddr>() {
+        if !rules.match_ip(&ip) {
+            debug!("sni ip not in unlock cidr: {sni}");
+            return Ok(());
+        }
+        ip
+    } else {
+        if !rules.match_domain(&sni) {
+            debug!("sni domain not matched: {sni}");
+            return Ok(());
+        }
+        resolve_via_upstream(&state, &sni).await?
+    };
     let upstream_addr = format!("{real_ip}:443");
 
     debug!("sni relay: {sni} -> {upstream_addr}");
@@ -274,9 +283,14 @@ async fn handle_http_connection(state: Arc<AppState>, mut inbound: TcpStream) ->
     };
 
     let rules = state.rules.load();
-    if !rules.match_domain(&host) { return Ok(()); }
-
-    let real_ip = resolve_via_upstream(&state, &host).await?;
+    // 同 SNI:Host 是解锁 CIDR 内的裸 IP 就直连,否则按域名解析。
+    let real_ip: std::net::IpAddr = if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        if !rules.match_ip(&ip) { return Ok(()); }
+        ip
+    } else {
+        if !rules.match_domain(&host) { return Ok(()); }
+        resolve_via_upstream(&state, &host).await?
+    };
     let mut outbound = tokio::time::timeout(
         Duration::from_secs(10),
         TcpStream::connect(format!("{real_ip}:80")),

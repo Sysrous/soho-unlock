@@ -538,6 +538,30 @@ pub fn parse_dns_json_to_rules(raw: &str) -> Vec<crate::rules::RuleEntry> {
         if let Some(servers) = obj.get("servers").and_then(|v| v.as_array()) {
             let mut entries = Vec::new();
             for srv in servers {
+                // expectedIPs → IP-CIDR/IP-CIDR6 规则:媒体走裸 IP、无域名时,母节点中继靠这些段
+                // 放行并直连(配合 KimiR 把命中段的裸 IP 重定向过来)。geoip:* 需 geo 库,跳过。
+                if let Some(eips) = srv.get("expectedIPs").and_then(|v| v.as_array()) {
+                    for ip in eips {
+                        let Some(s) = ip.as_str() else { continue };
+                        let s = s.trim();
+                        if s.is_empty() || s.starts_with("geoip:") {
+                            continue;
+                        }
+                        let cidr = if s.contains('/') {
+                            s.to_string()
+                        } else if s.contains(':') {
+                            format!("{s}/128")
+                        } else {
+                            format!("{s}/32")
+                        };
+                        let rtype = if cidr.contains(':') { "IP-CIDR6" } else { "IP-CIDR" };
+                        entries.push(crate::rules::RuleEntry {
+                            rule_type: rtype.into(),
+                            value: cidr,
+                            tag: String::new(),
+                        });
+                    }
+                }
                 let domains = match srv.get("domains").and_then(|v| v.as_array()) {
                     Some(d) => d,
                     None => continue, // plain string like "1.1.1.1", skip
