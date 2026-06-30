@@ -103,6 +103,13 @@ async fn handle_socks5(state: Arc<AppState>, mut inbound: TcpStream) -> anyhow::
     let cmd = req[1];
     let atyp = req[3];
 
+    // For a domain CONNECT, whether the destination domain is itself a configured unlock
+    // target (e.g. a *.sooplive.com / *.edge4k.com subdomain). SOOP's media + API subdomains
+    // round-robin across many Korean IPs that can't all live in a CIDR list, so the relay
+    // must gate such a request on the DOMAIN ruleset, not the resolved IP — otherwise a legit
+    // unlock subdomain whose current IP is outside the configured CIDRs gets refused (REP 02).
+    let mut domain_unlock = false;
+
     let dest_ip: IpAddr = match atyp {
         0x01 => {
             let mut a = [0u8; 4];
@@ -115,12 +122,13 @@ async fn handle_socks5(state: Arc<AppState>, mut inbound: TcpStream) -> anyhow::
             IpAddr::V6(Ipv6Addr::from(a))
         }
         0x03 => {
-            // domain — media is normally a bare IP, but resolve just in case
+            // domain — KimiR routes unlock domains here by name (their IP round-robins).
             let mut l = [0u8; 1];
             inbound.read_exact(&mut l).await?;
             let mut d = vec![0u8; l[0] as usize];
             inbound.read_exact(&mut d).await?;
             let host = String::from_utf8_lossy(&d).to_string();
+            domain_unlock = state.rules.load().match_domain(&host);
             match crate::sni::resolve_via_upstream(&state, &host).await {
                 Ok(ip) => ip,
                 Err(_) => {
@@ -143,11 +151,12 @@ async fn handle_socks5(state: Arc<AppState>, mut inbound: TcpStream) -> anyhow::
         return Ok(());
     }
 
-    // Gate: only forward to configured unlock CIDRs — never an open proxy. The firewall
-    // already restricts WHO connects; this restricts WHERE they can reach.
+    // Gate: forward if the dest IP is in an unlock CIDR, OR the dest domain is itself an
+    // unlock target (domain CONNECT) — never an open proxy. The firewall already restricts
+    // WHO connects (landing nodes only); this restricts WHERE they can reach.
     let rules = state.rules.load();
-    if !rules.match_ip(&dest_ip) {
-        debug!("socks5 dest not in unlock cidr: {dest_ip}:{dest_port}");
+    if !domain_unlock && !rules.match_ip(&dest_ip) {
+        debug!("socks5 dest not in unlock cidr/domain: {dest_ip}:{dest_port}");
         reply(&mut inbound, 0x02).await?; // connection not allowed by ruleset
         return Ok(());
     }
