@@ -5,7 +5,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tracing::{debug, warn};
 
 use crate::state::AppState;
@@ -146,8 +146,14 @@ async fn handle_socks5(state: Arc<AppState>, mut inbound: TcpStream) -> anyhow::
     inbound.read_exact(&mut port_b).await?;
     let dest_port = u16::from_be_bytes(port_b);
 
+    if cmd == 0x03 {
+        // UDP ASSOCIATE — the DST.ADDR/PORT above is the client's expected source (ignored).
+        // We bind a relay socket and shuttle datagrams ↔ real dests. SOOP's P2P livestream
+        // grid egresses over UDP, which a CONNECT-only relay silently dropped.
+        return handle_udp_associate(state, inbound).await;
+    }
     if cmd != 0x01 {
-        reply(&mut inbound, 0x07).await?; // command not supported (only CONNECT)
+        reply(&mut inbound, 0x07).await?; // command not supported
         return Ok(());
     }
 
@@ -180,6 +186,106 @@ async fn handle_socks5(state: Arc<AppState>, mut inbound: TcpStream) -> anyhow::
         .await?;
 
     crate::sni::relay(inbound, outbound).await;
+    Ok(())
+}
+
+// SOCKS5 UDP ASSOCIATE relay. KimiR sends UDP over this for unlock destinations reached by
+// UDP (e.g. SOOP's P2P livestream grid). We bind a relay socket, hand its port back, then
+// shuttle datagrams ↔ the real dests, gating each on the unlock ruleset (IP CIDR or unlock
+// domain). The TCP control connection staying open keeps the association alive; its close
+// (EOF) tears the relay down.
+async fn handle_udp_associate(state: Arc<AppState>, mut inbound: TcpStream) -> anyhow::Result<()> {
+    let relay = match UdpSocket::bind("0.0.0.0:0").await {
+        Ok(s) => s,
+        Err(_) => {
+            reply(&mut inbound, 0x01).await?;
+            return Ok(());
+        }
+    };
+    let port = relay.local_addr()?.port();
+    let pb = port.to_be_bytes();
+    // BND.ADDR=0.0.0.0 → KimiR sends UDP to the SOCKS5 server's own IP (this TCP conn's peer).
+    inbound
+        .write_all(&[0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, pb[0], pb[1]])
+        .await?;
+
+    let upstream = match UdpSocket::bind("0.0.0.0:0").await {
+        Ok(s) => s,
+        Err(_) => return Ok(()),
+    };
+    state.stats.sni_relayed.fetch_add(1, Ordering::Relaxed);
+    debug!("socks5 udp associate on :{port}");
+
+    let mut down = vec![0u8; 65535]; // client (KimiR) → us
+    let mut up = vec![0u8; 65535]; // real dest → us
+    let mut client: Option<SocketAddr> = None;
+    let mut ctrl = [0u8; 256];
+
+    loop {
+        tokio::select! {
+            // client (KimiR) → real dest
+            r = relay.recv_from(&mut down) => {
+                let (n, src) = match r { Ok(v) => v, Err(_) => break };
+                client = Some(src);
+                // SOCKS5 UDP request: RSV(2) FRAG(1) ATYP(1) DST.ADDR DST.PORT DATA
+                if n < 4 || down[2] != 0 { continue; } // FRAG != 0 (fragmentation) unsupported
+                let (dest_ip, data_off): (IpAddr, usize) = match down[3] {
+                    0x01 => {
+                        if n < 10 { continue; }
+                        (IpAddr::V4(Ipv4Addr::new(down[4], down[5], down[6], down[7])), 10)
+                    }
+                    0x04 => {
+                        if n < 22 { continue; }
+                        let mut a = [0u8; 16];
+                        a.copy_from_slice(&down[4..20]);
+                        (IpAddr::V6(Ipv6Addr::from(a)), 22)
+                    }
+                    0x03 => {
+                        let l = down[4] as usize;
+                        if n < 5 + l + 2 { continue; }
+                        let host = String::from_utf8_lossy(&down[5..5 + l]).to_string();
+                        let allow_dom = state.rules.load().match_domain(&host);
+                        if let Ok(ip) = crate::sni::resolve_via_upstream(&state, &host).await {
+                            if allow_dom || state.rules.load().match_ip(&ip) {
+                                let p = u16::from_be_bytes([down[5 + l], down[5 + l + 1]]);
+                                let _ = upstream.send_to(&down[5 + l + 2..n], SocketAddr::new(ip, p)).await;
+                            }
+                        }
+                        continue;
+                    }
+                    _ => continue,
+                };
+                let dest_port = u16::from_be_bytes([down[data_off - 2], down[data_off - 1]]);
+                if !state.rules.load().match_ip(&dest_ip) { continue; }
+                let _ = upstream.send_to(&down[data_off..n], SocketAddr::new(dest_ip, dest_port)).await;
+            }
+            // real dest → client (KimiR), re-encapsulated
+            r = upstream.recv_from(&mut up) => {
+                let (n, src) = match r { Ok(v) => v, Err(_) => break };
+                let Some(c) = client else { continue };
+                let mut out = Vec::with_capacity(n + 22);
+                out.extend_from_slice(&[0, 0, 0]); // RSV RSV FRAG
+                match src.ip() {
+                    IpAddr::V4(v4) => {
+                        out.push(0x01);
+                        out.extend_from_slice(&v4.octets());
+                    }
+                    IpAddr::V6(v6) => {
+                        out.push(0x04);
+                        out.extend_from_slice(&v6.octets());
+                    }
+                }
+                out.extend_from_slice(&src.port().to_be_bytes());
+                out.extend_from_slice(&up[..n]);
+                let _ = relay.send_to(&out, c).await;
+            }
+            // TCP control connection closed → association ends
+            r = inbound.read(&mut ctrl) => {
+                if matches!(r, Ok(0) | Err(_)) { break; }
+            }
+        }
+    }
+    debug!("socks5 udp associate closed");
     Ok(())
 }
 
