@@ -45,8 +45,12 @@ pub fn apply_rules(state: &Arc<AppState>, backend: FwBackend, ports: &[u16]) {
     let sources = state.sources.load();
     let ips: Vec<String> = sources.ip_set.iter().map(|ip| ip.to_string()).collect();
     if ips.is_empty() {
-        info!("firewall: no sources in ip_set, skipping");
-        return;
+        // Fail-CLOSED: no whitelist yet → DON'T bail (that left the relay ports wide open).
+        // Fall through and apply with an empty allow-set, so only loopback passes and every
+        // remote is DROPped on the relay ports. The outbound gRPC config push (not firewalled)
+        // re-applies with the real landing whitelist moments later. Was `return` = fail-open,
+        // an open-relay window the (now removed) SOCKS5 auth used to backstop.
+        info!("firewall: empty whitelist → deny-all lockdown on relay ports");
     }
 
     let ip_refs: Vec<&str> = ips.iter().map(|s| s.as_str()).collect();

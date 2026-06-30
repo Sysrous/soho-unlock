@@ -62,11 +62,13 @@ async fn handle_socks5(state: Arc<AppState>, mut inbound: TcpStream) -> anyhow::
     // the relay is never an open proxy even if the source-IP firewall is ever bypassed.
     // No creds → no-auth (firewall is then the only lock).
     let want_user = &state.config.server.socks_user;
-    if !want_user.is_empty() {
-        if !methods.contains(&0x02) {
-            inbound.write_all(&[0x05, 0xFF]).await?; // no acceptable method
-            return Ok(());
-        }
+    // Prefer no-auth when the client offers it. The source-IP firewall + is_source_allowed
+    // (both fail-CLOSED on an empty whitelist) are the real WHO locks, so the RFC1929 round-trip
+    // is pure added latency on every short-lived P2P media connection. Fall back to user/pass
+    // only if the client doesn't offer no-auth AND creds are configured.
+    if methods.contains(&0x00) {
+        inbound.write_all(&[0x05, 0x00]).await?; // no-auth
+    } else if !want_user.is_empty() && methods.contains(&0x02) {
         inbound.write_all(&[0x05, 0x02]).await?;
         // sub-negotiation: VER(0x01) ULEN UNAME PLEN PASSWD
         let mut v = [0u8; 1];
@@ -91,7 +93,8 @@ async fn handle_socks5(state: Arc<AppState>, mut inbound: TcpStream) -> anyhow::
         }
         inbound.write_all(&[0x01, 0x00]).await?; // auth success
     } else {
-        inbound.write_all(&[0x05, 0x00]).await?; // no-auth
+        inbound.write_all(&[0x05, 0xFF]).await?; // no acceptable method
+        return Ok(());
     }
 
     // --- request: VER CMD RSV ATYP DST.ADDR DST.PORT ---

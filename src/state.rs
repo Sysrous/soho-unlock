@@ -303,7 +303,10 @@ impl AppState {
     pub fn is_source_allowed(&self, ip: &IpAddr) -> bool {
         let sources = self.sources.load();
         if sources.entries.is_empty() {
-            return true;
+            // Fail-CLOSED: no whitelist loaded yet → allow only loopback, deny every remote.
+            // Closes the open-relay window the no-auth SOCKS5 would otherwise have at boot,
+            // before the config push populates the landing whitelist. (Was fail-open `true`.)
+            return ip.is_loopback();
         }
         sources.contains(ip) || ip.is_loopback()
     }
