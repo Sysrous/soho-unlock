@@ -161,11 +161,21 @@ async fn handle_socks5(state: Arc<AppState>, mut inbound: TcpStream) -> anyhow::
     }
 
     // Gate: forward if the dest IP is in an unlock CIDR, OR the dest domain is itself an
-    // unlock target (domain CONNECT) — never an open proxy. The firewall already restricts
-    // WHO connects (landing nodes only); this restricts WHERE they can reach.
+    // unlock target (domain CONNECT), OR the dest is a high media port (SOOP-style P2P) —
+    // never an open proxy. The firewall already restricts WHO connects (landing nodes only);
+    // this restricts WHERE they can reach.
+    //
+    // media-port gate: SOOP live delivers video over a P2P grid of bare Korean residential
+    // IPs on high ports (10000-29999) that churn every minute — unboundable by CIDR (a 60s
+    // capture yields ~17 fresh /24s). The cheap landing datacenter can't even reach those
+    // residential peers (1/6 in testing), but this AWS node can (6/6) — better peering. The
+    // landing routes such traffic to us by PORT (route.json usk-port rule); accept it here on
+    // the same port signature so the gate isn't a losing whack-a-mole CIDR chase. Still gated
+    // to trusted landings by the firewall + is_source_allowed, so this is not an open relay.
+    let media_port = (10000..=29999).contains(&dest_port);
     let rules = state.rules.load();
-    if !domain_unlock && !rules.match_ip(&dest_ip) {
-        debug!("socks5 dest not in unlock cidr/domain: {dest_ip}:{dest_port}");
+    if !domain_unlock && !media_port && !rules.match_ip(&dest_ip) {
+        debug!("socks5 dest not in unlock cidr/domain/mediaport: {dest_ip}:{dest_port}");
         reply(&mut inbound, 0x02).await?; // connection not allowed by ruleset
         return Ok(());
     }
